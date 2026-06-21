@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">BootStudio</string>
+    <string name="choose_access">Choose Access Method</string>
+    <string name="shizuku_access">Use Shizuku</string>
+    <string name="root_access">Use Root Access</string>
+    <string name="error_message">An error occurred while trying to access the system.</string>
+    <string name="no_bootanimation_found">No bootanimation.zip found.</string>
+</resources>
