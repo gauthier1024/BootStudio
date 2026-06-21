@@ -12,6 +12,7 @@ import com.bootstudio.ui.screens.HomeScreen
 import com.bootstudio.ui.screens.SetupScreen
 import com.bootstudio.ui.screens.CreateScreen
 import com.bootstudio.ui.screens.CommunityScreen
+import com.bootstudio.ui.screens.PreviewScreen
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -63,32 +64,38 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen() {
     var selectedItem by remember { mutableIntStateOf(0) }
+    var previewPath by remember { mutableStateOf<String?>(null) }
+    
     val items = listOf("Home", "Create", "Community")
     val icons = listOf(Icons.Default.Home, Icons.Default.Add, Icons.Default.People)
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                items.forEachIndexed { index, item ->
-                    NavigationBarItem(
-                        icon = { Icon(icons[index], contentDescription = item) },
-                        label = { Text(item) },
-                        selected = selectedItem == index,
-                        onClick = { selectedItem = index }
-                    )
+    if (previewPath != null) {
+        PreviewScreen(zipPath = previewPath!!, onBack = { previewPath = null })
+    } else {
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
+                    items.forEachIndexed { index, item ->
+                        NavigationBarItem(
+                            icon = { Icon(icons[index], contentDescription = item) },
+                            label = { Text(item) },
+                            selected = selectedItem == index,
+                            onClick = { selectedItem = index }
+                        )
+                    }
                 }
             }
-        }
-    ) { innerPadding ->
-        Surface(
-            modifier = Modifier.padding(innerPadding),
-            color = MaterialTheme.colorScheme.background
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                when (selectedItem) {
-                    0 -> HomeScreen()
-                    1 -> CreateScreen()
-                    2 -> CommunityScreen()
+        ) { innerPadding ->
+            Surface(
+                modifier = Modifier.padding(innerPadding),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when (selectedItem) {
+                        0 -> HomeScreen(onPreview = { previewPath = it })
+                        1 -> CreateScreen()
+                        2 -> CommunityScreen()
+                    }
                 }
             }
         }
