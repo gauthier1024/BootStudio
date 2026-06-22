@@ -37,13 +37,14 @@ BootStudio
 ├── 📂 original
 │   ├── 📦 data_misc_bootanim_bootanimation.zip
 │   └── 📦 product_media_bootanimation.zip
-├── 📂 data
-│   └── 📂 misc
-│       └── 📂 bootanim
-│           └── 📦 bootanimation.zip
-└── 📂 product
-    └── 📂 media
-        └── 📦 bootanimation.zip
+└── 📂 system
+    ├── 📂 data
+    │   └── 📂 misc
+    │       └── 📂 bootanim
+    │           └── 📦 bootanimation.zip
+    └── 📂 product
+        └── 📂 media
+            └── 📦 bootanimation.zip
 ```
 
 | Path | Description |
@@ -53,7 +54,7 @@ BootStudio
 | 📄 `disable` | Toggle file used to disable the Magisk module without removing it. |
 | 📦 `original/data_misc_bootanim_bootanimation.zip` | Stores the original boot animation from `/data/misc/bootanim/`. |
 | 📦 `original/product_media_bootanimation.zip` | Stores the original boot animation from `/product/media/`. |
-| 📦 `data/misc/bootanim/bootanimation.zip` | First bootanimation path used by Android. |
-| 📦 `product/media/bootanimation.zip` | Secondary bootanimation (there is usually only one). |
+| 📦 `system/data/misc/bootanim/bootanimation.zip` | First bootanimation path used by Android. |
+| 📦 `system/product/media/bootanimation.zip` | Secondary bootanimation (there is usually only one). |
 
 All of the path above are specific to my rom and can be different on your device

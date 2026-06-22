@@ -1,7 +1,6 @@
 package com.bootstudio
 
 import android.os.Bundle
-import android.widget.Toast
 import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,9 +13,11 @@ import com.bootstudio.ui.screens.SetupScreen
 import com.bootstudio.ui.screens.CreateScreen
 import com.bootstudio.ui.screens.CommunityScreen
 import com.bootstudio.ui.screens.PreviewScreen
+import com.bootstudio.ui.screens.ErrorScreen
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Add
@@ -24,7 +25,11 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import rikka.shizuku.Shizuku
 import utils.FFmpegDownloader
+import utils.CommandExecutor
 import utils.MagiskManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -42,25 +47,56 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
         val initialPath = prefs.getString("boot_anim_path", null)
         
-        if (initialPath != null) {
-            Toast.makeText(this, "Debug: setupPath = $initialPath", Toast.LENGTH_LONG).show()
-        }
-
         enableEdgeToEdge()
         setContent {
+            val scope = rememberCoroutineScope()
             BootStudioTheme {
                 var currentPath by remember { mutableStateOf(initialPath) }
+                var hasRoot by remember { mutableStateOf<Boolean?>(null) }
+
+                LaunchedEffect(currentPath) {
+                    if (currentPath != null) {
+                        // Check for root if setup is already finished
+                        withContext(Dispatchers.IO) {
+                            val success = CommandExecutor.initRootSession()
+                            hasRoot = success
+                        }
+                    }
+                }
 
                 if (currentPath == null) {
                     SetupScreen(onSetupComplete = { path ->
-                        // Initialize Magisk Module and back up original animation
-                        MagiskManager.createMagiskModule(path)
-
-                        prefs.edit().putString("boot_anim_path", path).apply()
-                        currentPath = path
+                        // Initial root check happens inside createMagiskModule or here
+                        scope.launch {
+                            val success = withContext(Dispatchers.IO) {
+                                CommandExecutor.initRootSession()
+                            }
+                            if (success) {
+                                withContext(Dispatchers.IO) {
+                                    MagiskManager.createMagiskModule(path)
+                                }
+                                prefs.edit().putString("boot_anim_path", path).apply()
+                                currentPath = path
+                            } else {
+                                hasRoot = false
+                            }
+                        }
                     })
-                } else {
+                } else if (hasRoot == false) {
+                    ErrorScreen(
+                        title = "Root Access Required",
+                        message = "BootStudio requires Superuser (root) permissions to modify system files and Magisk modules. Please grant access and try again.",
+                        onRetry = {
+                            hasRoot = null // Reset to trigger check again
+                        }
+                    )
+                } else if (hasRoot == true) {
                     MainScreen()
+                } else {
+                    // Loading or checking root
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
                 }
             }
         }

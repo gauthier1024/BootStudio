@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +25,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -40,6 +43,7 @@ import kotlinx.coroutines.withContext
 import utils.BootAnimParser
 import utils.CommandExecutor
 import utils.FFmpegDownloader
+import utils.MagiskManager
 import java.io.File
 
 data class BootAnimation(
@@ -58,10 +62,20 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
     var animations by remember { mutableStateOf<List<BootAnimation>>(emptyList()) }
     var playingAnim by remember { mutableStateOf<BootAnimation?>(null) }
     var systemAnimToUse by remember { mutableStateOf<String?>(null) }
+    var savedSystemPath by remember { mutableStateOf<String?>(null) }
+    var appliedPath by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            CommandExecutor.initRootSession()
+        }
+
         val prefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
         val systemPath = prefs.getString("boot_anim_path", null)
+        savedSystemPath = systemPath
+        
+        // Load the previously saved applied path
+        appliedPath = prefs.getString("applied_anim_path", "system_default")
         
         val assetList = context.assets.list("bootanimations") ?: emptyArray()
         val zipFiles = assetList.filter { it.startsWith("bootanimation_") && it.endsWith(".zip") }
@@ -78,11 +92,11 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
         }
 
         var localSystemPath: String? = null
-        val modulePath = "/data/adb/modules/BootStudio"
+        val moduleRoot = "/data/adb/modules/BootStudio"
         
         if (systemPath != null) {
             val backupFileName = systemPath.trimStart('/').replace('/', '_')
-            val backupPath = "$modulePath/original/$backupFileName"
+            val backupPath = "$moduleRoot/original/$backupFileName"
 
             // Use detected path from preferences
             val backupExists = withContext(Dispatchers.IO) {
@@ -125,6 +139,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                     name = name,
                     path = fullPath,
                     isAsset = true,
+                    tag = "Built-in",
                     preview = null,
                     videoUri = null
                 )
@@ -204,25 +219,69 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(animations) { anim ->
-                        AnimationCard(anim, onPlay = { 
-                            if (anim.isAsset) {
-                                // Copy to cache for preview if it's in assets
-                                val file = File(context.cacheDir, anim.path.split("/").last())
-                                if (!file.exists()) {
-                                    context.assets.open(anim.path).use { input ->
-                                        file.outputStream().use { output ->
-                                            input.copyTo(output)
+                        val isApplied = if (anim.tag == "System") {
+                            appliedPath == "system_default"
+                        } else {
+                            appliedPath == anim.path
+                        }
+
+                        AnimationCard(
+                            animation = anim,
+                            isApplied = isApplied,
+                            onPlay = {
+                                // ... (no change)
+                                if (anim.isAsset) {
+                                    val file = File(context.cacheDir, anim.path.split("/").last())
+                                    if (!file.exists()) {
+                                        context.assets.open(anim.path).use { input ->
+                                            file.outputStream().use { output ->
+                                                input.copyTo(output)
+                                            }
+                                        }
+                                    }
+                                    onPreview(file.absolutePath)
+                                } else if (anim.tag == "System") {
+                                    onPreview(systemAnimToUse ?: anim.path)
+                                } else {
+                                    onPreview(anim.path)
+                                }
+                            },
+                            onApply = {
+                                scope.launch {
+                                    val currentPrefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
+                                    val currentPath = savedSystemPath
+                                    if (currentPath != null) {
+                                        if (anim.tag == "System") {
+                                            withContext(Dispatchers.IO) {
+                                                MagiskManager.setDefaultAnimation(currentPath)
+                                            }
+                                            appliedPath = "system_default"
+                                            currentPrefs.edit().putString("applied_anim_path", "system_default").apply()
+                                        } else {
+                                            val sourcePath = if (anim.isAsset) {
+                                                val file = File(context.cacheDir, anim.path.split("/").last())
+                                                withContext(Dispatchers.IO) {
+                                                    context.assets.open(anim.path).use { input ->
+                                                        file.outputStream().use { output ->
+                                                            input.copyTo(output)
+                                                        }
+                                                    }
+                                                }
+                                                file.absolutePath
+                                            } else {
+                                                anim.path
+                                            }
+
+                                            withContext(Dispatchers.IO) {
+                                                MagiskManager.changeBootAnimation(sourcePath, currentPath)
+                                            }
+                                            appliedPath = anim.path
+                                            currentPrefs.edit().putString("applied_anim_path", anim.path).apply()
                                         }
                                     }
                                 }
-                                onPreview(file.absolutePath)
-                            } else if (anim.tag == "System") {
-                                // Use the cached readable copy for system animations
-                                onPreview(systemAnimToUse ?: anim.path)
-                            } else {
-                                onPreview(anim.path)
                             }
-                        })
+                        )
                     }
                 }
             }
@@ -235,63 +294,37 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
 }
 
 @Composable
-fun AnimationCard(animation: BootAnimation, onPlay: () -> Unit) {
+fun AnimationCard(
+    animation: BootAnimation,
+    isApplied: Boolean,
+    onPlay: () -> Unit,
+    onApply: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(120.dp)
-            .clickable { onPlay() },
-        shape = RoundedCornerShape(12.dp)
+            .height(100.dp),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            // Left Side: Name and Info
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = animation.name,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (animation.tag != null) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = animation.tag,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
-                Text(
-                    text = if (animation.isAsset) "Boot Animation" else animation.path,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
-
-            // Right Side: Video Preview
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 1. Preview Image with Play Button
             Box(
                 modifier = Modifier
-                    .width(100.dp)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp))
+                    .size(84.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(Color.Black)
+                    .clickable { onPlay() }
             ) {
-                if (animation.videoUri != null) {
-                    VideoPreview(animation.videoUri)
-                } else if (animation.preview != null) {
+                if (animation.preview != null) {
                     Image(
                         bitmap = animation.preview.asImageBitmap(),
                         contentDescription = null,
@@ -300,13 +333,90 @@ fun AnimationCard(animation: BootAnimation, onPlay: () -> Unit) {
                     )
                 }
                 
-                // Play Icon Overlay
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.7f),
-                    modifier = Modifier.align(Alignment.Center).size(32.dp)
+                Surface(
+                    modifier = Modifier.align(Alignment.Center),
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.4f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play",
+                        tint = Color.White,
+                        modifier = Modifier.padding(4.dp).size(24.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // 2. Title and Source
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = animation.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+                Text(
+                    text = when {
+                        animation.tag == "System" -> animation.path
+                        animation.isAsset -> "Built-in"
+                        else -> "Community User" // Placeholder for username
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // 3. Tag
+            if (animation.tag != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Text(
+                        text = animation.tag,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // 4. Circular Apply Button
+            if (isApplied) {
+                FilledIconButton(
+                    onClick = onApply,
+                    modifier = Modifier.size(48.dp),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = if (animation.tag == "System") 
+                            MaterialTheme.colorScheme.secondaryContainer 
+                        else MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Applied",
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            } else {
+                OutlinedIconButton(
+                    onClick = onApply,
+                    modifier = Modifier.size(48.dp),
+                    shape = CircleShape,
+                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                ) {
+                    // Empty circle
+                }
             }
         }
     }
