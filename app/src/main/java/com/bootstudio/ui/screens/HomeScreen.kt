@@ -52,7 +52,9 @@ data class BootAnimation(
     val isAsset: Boolean,
     val tag: String? = null,
     val preview: Bitmap? = null,
-    val videoUri: Uri? = null
+    val videoUri: Uri? = null,
+    val resolution: String? = null,
+    val isNonStandard: Boolean = false
 )
 
 @Composable
@@ -158,7 +160,13 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                     anim.path
                 }
 
-                // Load static thumbnail first
+                // Load static thumbnail and metadata
+                val desc = if (anim.isAsset) {
+                    BootAnimParser.parseDescFromAssets(context, anim.path)
+                } else {
+                    BootAnimParser.parseDesc(context, File(processingPath))
+                }
+
                 val preview = if (anim.isAsset) {
                     BootAnimParser.getFirstFrame(context, anim.path)
                 } else {
@@ -167,7 +175,11 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                 
                 withContext(Dispatchers.Main) {
                     animations = animations.toMutableList().also { list ->
-                        list[index] = list[index].copy(preview = preview)
+                        list[index] = list[index].copy(
+                            preview = preview,
+                            resolution = desc?.let { "${it.width}x${it.height}" },
+                            isNonStandard = desc?.isStandard == false
+                        )
                     }
                 }
 
@@ -361,10 +373,15 @@ fun AnimationCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = when {
-                        animation.tag == "System" -> animation.path
-                        animation.isAsset -> "Built-in"
-                        else -> "Community User" // Placeholder for username
+                    text = buildString {
+                        append(when {
+                            animation.tag == "System" -> animation.path
+                            animation.isAsset -> "Built-in"
+                            else -> "Community User"
+                        })
+                        animation.resolution?.let {
+                            append(" • $it")
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -374,19 +391,41 @@ fun AnimationCard(
             }
 
             // 3. Tag
-            if (animation.tag != null) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                ) {
-                    Text(
-                        text = animation.tag,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        fontWeight = FontWeight.Medium
-                    )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            ) {
+                if (animation.isNonStandard) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = "Modified",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                if (animation.tag != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = animation.tag,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
 

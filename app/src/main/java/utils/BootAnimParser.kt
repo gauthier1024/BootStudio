@@ -16,7 +16,8 @@ data class BootAnimDesc(
     val width: Int,
     val height: Int,
     val fps: Int,
-    val parts: List<BootAnimPart>
+    val parts: List<BootAnimPart>,
+    val isStandard: Boolean = true
 )
 
 data class BootAnimPart(
@@ -27,6 +28,7 @@ data class BootAnimPart(
 )
 
 object BootAnimParser {
+    // ... rest of the code
 
     fun parseDesc(context: Context, zipFile: File): BootAnimDesc? {
         return try {
@@ -77,23 +79,35 @@ object BootAnimParser {
         val fps = parts[2].toInt()
 
         val animParts = mutableListOf<BootAnimPart>()
+        var isStandard = true
         var line: String? = reader.readLine()
         while (line != null) {
-            val lineParts = line.split(" ").filter { it.isNotBlank() }
-            if (lineParts.size >= 4) {
-                animParts.add(
-                    BootAnimPart(
-                        type = lineParts[0][0],
-                        loop = lineParts[1].toInt(),
-                        pause = lineParts[2].toInt(),
-                        folder = lineParts[3]
-                    )
-                )
+            val trimmedLine = line.trim()
+            if (trimmedLine.isNotEmpty()) {
+                val lineParts = trimmedLine.split(" ").filter { it.isNotBlank() }
+                // Standard parts start with 'p' or 'c'
+                if (lineParts.size >= 4 && (lineParts[0] == "p" || lineParts[0] == "c")) {
+                    try {
+                        animParts.add(
+                            BootAnimPart(
+                                type = lineParts[0][0],
+                                loop = lineParts[1].toInt(),
+                                pause = lineParts[2].toInt(),
+                                folder = lineParts[3]
+                            )
+                        )
+                    } catch (e: NumberFormatException) {
+                        isStandard = false
+                    }
+                } else {
+                    // Line found that doesn't match standard part format
+                    isStandard = false
+                }
             }
             line = reader.readLine()
         }
 
-        return BootAnimDesc(width, height, fps, animParts)
+        return BootAnimDesc(width, height, fps, animParts, isStandard)
     }
 
     fun getFirstFrame(context: Context, assetPath: String): Bitmap? {
