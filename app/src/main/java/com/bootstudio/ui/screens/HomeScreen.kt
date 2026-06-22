@@ -35,13 +35,18 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import utils.BootAnimParser
+import utils.CommandExecutor
+import utils.FFmpegDownloader
 import java.io.File
 
 data class BootAnimation(
     val name: String,
-    val assetPath: String,
+    val path: String,
+    val isAsset: Boolean,
+    val tag: String? = null,
     val preview: Bitmap? = null,
     val videoUri: Uri? = null
 )
@@ -49,35 +54,127 @@ data class BootAnimation(
 @Composable
 fun HomeScreen(onPreview: (String) -> Unit = {}) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var animations by remember { mutableStateOf<List<BootAnimation>>(emptyList()) }
     var playingAnim by remember { mutableStateOf<BootAnimation?>(null) }
+    var systemAnimToUse by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        val prefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
+        val systemPath = prefs.getString("boot_anim_path", null)
+        
         val assetList = context.assets.list("bootanimations") ?: emptyArray()
         val zipFiles = assetList.filter { it.startsWith("bootanimation_") && it.endsWith(".zip") }
         
-        // Step 1: Immediately show all rectangles with titles
-        val initialAnims = zipFiles.map { fileName ->
-            val name = fileName.removePrefix("bootanimation_").removeSuffix(".zip")
-            val fullPath = "bootanimations/$fileName"
-            BootAnimation(
-                name = name,
-                assetPath = fullPath,
-                preview = null,
-                videoUri = null
+        val initialAnims = mutableListOf<BootAnimation>()
+        
+        // Use root to copy the file to a location the app can read if it's in a restricted directory
+        val prepareSystemAnim: suspend (String) -> String? = { sourcePath ->
+            withContext(Dispatchers.IO) {
+                val target = File(context.cacheDir, "system_backup.zip")
+                CommandExecutor.executeWithSu("cp \"$sourcePath\" \"${target.absolutePath}\" && chmod 644 \"${target.absolutePath}\"")
+                if (target.exists()) target.absolutePath else null
+            }
+        }
+
+        var localSystemPath: String? = null
+        val modulePath = "/data/adb/modules/BootStudio"
+        
+        if (systemPath != null) {
+            val backupFileName = systemPath.trimStart('/').replace('/', '_')
+            val backupPath = "$modulePath/original/$backupFileName"
+
+            // Use detected path from preferences
+            val backupExists = withContext(Dispatchers.IO) {
+                CommandExecutor.executeWithSu("[ -f \"$backupPath\" ] && echo \"exists\"").contains("exists")
+            }
+            if (backupExists) {
+                localSystemPath = prepareSystemAnim(backupPath)
+            } else {
+                // Fallback to direct system path if backup doesn't exist yet
+                val detectedExists = withContext(Dispatchers.IO) {
+                    CommandExecutor.executeWithSu("[ -f \"$systemPath\" ] && echo \"exists\"").contains("exists")
+                }
+                if (detectedExists) {
+                    localSystemPath = prepareSystemAnim(systemPath)
+                }
+            }
+        }
+        
+        systemAnimToUse = localSystemPath
+
+        if (localSystemPath != null && systemPath != null) {
+            initialAnims.add(
+                BootAnimation(
+                    name = "System Animation",
+                    path = systemPath, // Display the actual system path
+                    isAsset = false,
+                    tag = "System",
+                    preview = null,
+                    videoUri = null
+                )
             )
         }
+
+        // Add Asset animations
+        zipFiles.forEach { fileName ->
+            val name = fileName.removePrefix("bootanimation_").removeSuffix(".zip")
+            val fullPath = "bootanimations/$fileName"
+            initialAnims.add(
+                BootAnimation(
+                    name = name,
+                    path = fullPath,
+                    isAsset = true,
+                    preview = null,
+                    videoUri = null
+                )
+            )
+        }
+        
         animations = initialAnims
 
-        // Step 2: Load previews in background and update cards one by one
+        // Step 2: Load previews and generate videos in background
         withContext(Dispatchers.IO) {
-            zipFiles.forEachIndexed { index, fileName ->
-                val fullPath = "bootanimations/$fileName"
-                val preview = BootAnimParser.getFirstFrame(context, fullPath)
+            animations.forEachIndexed { index, anim ->
+                // For System animation, we must use the cached path for processing
+                val processingPath = if (anim.tag == "System") {
+                    systemAnimToUse ?: anim.path
+                } else {
+                    anim.path
+                }
+
+                // Load static thumbnail first
+                val preview = if (anim.isAsset) {
+                    BootAnimParser.getFirstFrame(context, anim.path)
+                } else {
+                    BootAnimParser.getFirstFrameFromFile(context, File(processingPath))
+                }
                 
                 withContext(Dispatchers.Main) {
                     animations = animations.toMutableList().also { list ->
                         list[index] = list[index].copy(preview = preview)
+                    }
+                }
+
+                // Generate video preview for System animation if FFmpeg is ready
+                if (anim.tag == "System" && FFmpegDownloader.isInstalled(context)) {
+                    val videoFile = File(context.cacheDir, "system_preview.mp4")
+                    if (!videoFile.exists()) {
+                        BootAnimParser.generateVideoPreviewFromFile(context, File(processingPath), videoFile) { success ->
+                            if (success) {
+                                scope.launch {
+                                    animations = animations.toMutableList().also { list ->
+                                        list[index] = list[index].copy(videoUri = Uri.fromFile(videoFile))
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            animations = animations.toMutableList().also { list ->
+                                list[index] = list[index].copy(videoUri = Uri.fromFile(videoFile))
+                            }
+                        }
                     }
                 }
             }
@@ -108,16 +205,23 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                 ) {
                     items(animations) { anim ->
                         AnimationCard(anim, onPlay = { 
-                            // Copy to cache for preview if it's in assets
-                            val file = File(context.cacheDir, anim.assetPath.split("/").last())
-                            if (!file.exists()) {
-                                context.assets.open(anim.assetPath).use { input ->
-                                    file.outputStream().use { output ->
-                                        input.copyTo(output)
+                            if (anim.isAsset) {
+                                // Copy to cache for preview if it's in assets
+                                val file = File(context.cacheDir, anim.path.split("/").last())
+                                if (!file.exists()) {
+                                    context.assets.open(anim.path).use { input ->
+                                        file.outputStream().use { output ->
+                                            input.copyTo(output)
+                                        }
                                     }
                                 }
+                                onPreview(file.absolutePath)
+                            } else if (anim.tag == "System") {
+                                // Use the cached readable copy for system animations
+                                onPreview(systemAnimToUse ?: anim.path)
+                            } else {
+                                onPreview(anim.path)
                             }
-                            onPreview(file.absolutePath)
                         })
                     }
                 }
@@ -148,15 +252,32 @@ fun AnimationCard(animation: BootAnimation, onPlay: () -> Unit) {
                     .padding(16.dp),
                 verticalArrangement = Arrangement.Center
             ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = animation.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (animation.tag != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = animation.tag,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
                 Text(
-                    text = animation.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Boot Animation",
+                    text = if (animation.isAsset) "Boot Animation" else animation.path,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
 
@@ -228,12 +349,21 @@ fun BootAnimPlayer(animation: BootAnimation, onDismiss: () -> Unit) {
     var isLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(animation) {
-        val desc = BootAnimParser.parseDescFromAssets(context, animation.assetPath) ?: return@LaunchedEffect
+        val desc = if (animation.isAsset) {
+            BootAnimParser.parseDescFromAssets(context, animation.path)
+        } else {
+            BootAnimParser.parseDesc(context, File(animation.path))
+        } ?: return@LaunchedEffect
+
         val frameDuration = 1000L / desc.fps
         
         isLoaded = true
         for (part in desc.parts) {
-            val frames = BootAnimParser.getFramesForPartFromAssets(context, animation.assetPath, part.folder)
+            val frames = if (animation.isAsset) {
+                BootAnimParser.getFramesForPartFromAssets(context, animation.path, part.folder)
+            } else {
+                BootAnimParser.getFramesForPart(File(animation.path), part.folder)
+            }
             if (frames.isEmpty()) continue
 
             val loopCount = if (part.loop == 0) 5 else part.loop

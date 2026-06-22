@@ -1,6 +1,7 @@
 package com.bootstudio
 
 import android.os.Bundle
+import android.widget.Toast
 import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,9 +20,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import rikka.shizuku.Shizuku
+import utils.FFmpegDownloader
+import utils.MagiskManager
 
 class MainActivity : ComponentActivity() {
 
@@ -34,9 +37,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Shizuku.addRequestPermissionResultListener(permissionListener)
+        FFmpegDownloader.initLoader(this)
         
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
         val initialPath = prefs.getString("boot_anim_path", null)
+        
+        if (initialPath != null) {
+            Toast.makeText(this, "Debug: setupPath = $initialPath", Toast.LENGTH_LONG).show()
+        }
 
         enableEdgeToEdge()
         setContent {
@@ -45,6 +53,9 @@ class MainActivity : ComponentActivity() {
 
                 if (currentPath == null) {
                     SetupScreen(onSetupComplete = { path ->
+                        // Initialize Magisk Module and back up original animation
+                        MagiskManager.createMagiskModule(path)
+
                         prefs.edit().putString("boot_anim_path", path).apply()
                         currentPath = path
                     })
@@ -67,7 +78,7 @@ fun MainScreen() {
     var previewPath by remember { mutableStateOf<String?>(null) }
     
     val items = listOf("Home", "Create", "Community")
-    val icons = listOf(Icons.Default.Home, Icons.Default.Add, Icons.Default.People)
+    val icons = listOf(Icons.Default.Home, Icons.Default.Add, Icons.Default.Person)
 
     if (previewPath != null) {
         PreviewScreen(zipPath = previewPath!!, onBack = { previewPath = null })

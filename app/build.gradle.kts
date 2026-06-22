@@ -35,6 +35,45 @@ android {
             )
         }
     }
+    packaging {
+        jniLibs {
+            // Exclude all FFmpeg-related native libraries from the APK
+            // since they are downloaded at runtime.
+            excludes += "**/libav*.so"
+            excludes += "**/libsw*.so"
+            excludes += "**/libffmpeg*.so"
+            excludes += "**/libx264.so"
+            excludes += "**/libx265.so"
+            excludes += "**/libvpx.so"
+            excludes += "**/libwebp.so"
+            excludes += "**/libopus.so"
+            excludes += "**/libvorbis*.so"
+            excludes += "**/libtheora.so"
+            excludes += "**/libmp3lame.so"
+            excludes += "**/libass.so"
+            excludes += "**/libfreetype.so"
+            excludes += "**/libfribidi.so"
+            excludes += "**/libfontconfig.so"
+            excludes += "**/libgnutls.so"
+            excludes += "**/libgmp.so"
+            excludes += "**/libiconv.so"
+            excludes += "**/libxml2.so"
+            excludes += "**/libopencore-amr*.so"
+            excludes += "**/libshine.so"
+            excludes += "**/libsnappy.so"
+            excludes += "**/libsoxr.so"
+            excludes += "**/libspeex.so"
+            excludes += "**/libvidstab.so"
+            excludes += "**/libzimg.so"
+            excludes += "**/libsrt.so"
+            excludes += "**/libtesseract.so"
+            excludes += "**/librubberband.so"
+            excludes += "**/libopenh264.so"
+            excludes += "**/libchromaprint.so"
+            excludes += "**/libkvazaar.so"
+            excludes += "**/libdav1d.so"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -49,7 +88,6 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.material.icons.core)
-    implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)

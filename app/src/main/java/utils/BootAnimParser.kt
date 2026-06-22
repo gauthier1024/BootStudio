@@ -97,7 +97,6 @@ object BootAnimParser {
     }
 
     fun getFirstFrame(context: Context, assetPath: String): Bitmap? {
-        // Check cache first
         val cacheKey = assetPath.replace("/", "_") + ".thumb"
         val cacheFile = File(context.cacheDir, cacheKey)
         if (cacheFile.exists()) {
@@ -105,58 +104,82 @@ object BootAnimParser {
         }
 
         return try {
-            val options = BitmapFactory.Options().apply {
-                inPreferredConfig = Bitmap.Config.RGB_565
-                inSampleSize = 2 // Load at 1/2 resolution for faster thumbnail generation
-            }
-
-            val sampledFramesData = mutableListOf<ByteArray>()
-            
             context.assets.open(assetPath).use { inputStream ->
-                ZipInputStream(inputStream.buffered()).use { zip ->
-                    var entry: ZipEntry? = zip.nextEntry
-                    var count = 0
-                    while (entry != null) {
-                        if (entry.name.endsWith(".png") || entry.name.endsWith(".jpg")) {
-                            if (count % 25 == 0) { // Sample every 25th frame roughly
-                                sampledFramesData.add(zip.readBytes())
-                            }
-                            count++
-                        }
-                        if (sampledFramesData.size >= 15) break // Limit to 15 samples for speed
-                        entry = zip.nextEntry
+                val bitmap = getFirstFrameFromStream(inputStream)
+                bitmap?.let {
+                    FileOutputStream(cacheFile).use { out ->
+                        it.compress(Bitmap.CompressFormat.JPEG, 80, out)
                     }
                 }
+                bitmap
             }
-
-            var bestBitmap: Bitmap? = null
-            var maxVibrancyScore = -1.0
-
-            for (frameData in sampledFramesData) {
-                val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size, options)
-                if (bitmap != null) {
-                    val score = calculateVisualVibrancy(bitmap)
-                    if (score > maxVibrancyScore) {
-                        maxVibrancyScore = score
-                        bestBitmap?.recycle()
-                        bestBitmap = bitmap
-                    } else {
-                        bitmap.recycle()
-                    }
-                }
-            }
-            
-            // Save to cache
-            bestBitmap?.let {
-                FileOutputStream(cacheFile).use { out ->
-                    it.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                }
-            }
-            
-            bestBitmap
         } catch (e: Exception) {
             null
         }
+    }
+
+    fun getFirstFrameFromFile(context: Context, file: File): Bitmap? {
+        val cacheKey = file.absolutePath.replace("/", "_") + ".thumb"
+        val cacheFile = File(context.cacheDir, cacheKey)
+        if (cacheFile.exists()) {
+            return BitmapFactory.decodeFile(cacheFile.absolutePath)
+        }
+
+        return try {
+            file.inputStream().use { inputStream ->
+                val bitmap = getFirstFrameFromStream(inputStream)
+                bitmap?.let {
+                    FileOutputStream(cacheFile).use { out ->
+                        it.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                    }
+                }
+                bitmap
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun getFirstFrameFromStream(inputStream: InputStream): Bitmap? {
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+            inSampleSize = 2
+        }
+
+        val sampledFramesData = mutableListOf<ByteArray>()
+        
+        ZipInputStream(inputStream.buffered()).use { zip ->
+            var entry: ZipEntry? = zip.nextEntry
+            var count = 0
+            while (entry != null) {
+                if (entry.name.endsWith(".png") || entry.name.endsWith(".jpg")) {
+                    if (count % 25 == 0) {
+                        sampledFramesData.add(zip.readBytes())
+                    }
+                    count++
+                }
+                if (sampledFramesData.size >= 15) break
+                entry = zip.nextEntry
+            }
+        }
+
+        var bestBitmap: Bitmap? = null
+        var maxVibrancyScore = -1.0
+
+        for (frameData in sampledFramesData) {
+            val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size, options)
+            if (bitmap != null) {
+                val score = calculateVisualVibrancy(bitmap)
+                if (score > maxVibrancyScore) {
+                    maxVibrancyScore = score
+                    bestBitmap?.recycle()
+                    bestBitmap = bitmap
+                } else {
+                    bitmap.recycle()
+                }
+            }
+        }
+        return bestBitmap
     }
 
     private fun calculateVisualVibrancy(bitmap: Bitmap): Double {
@@ -240,29 +263,63 @@ object BootAnimParser {
 
     fun generateVideoPreview(context: Context, assetPath: String, outputVideoFile: File, onComplete: (Boolean) -> Unit) {
         val desc = parseDescFromAssets(context, assetPath) ?: return onComplete(false)
+        try {
+            context.assets.open(assetPath).use { inputStream ->
+                generateVideoFromStream(context, inputStream, desc, outputVideoFile, onComplete)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onComplete(false)
+        }
+    }
+
+    fun generateVideoPreviewFromFile(context: Context, zipFile: File, outputVideoFile: File, onComplete: (Boolean) -> Unit) {
+        val desc = parseDesc(context, zipFile) ?: return onComplete(false)
+        try {
+            zipFile.inputStream().use { inputStream ->
+                generateVideoFromStream(context, inputStream, desc, outputVideoFile, onComplete)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onComplete(false)
+        }
+    }
+
+    private fun generateVideoFromStream(
+        context: Context,
+        inputStream: InputStream,
+        desc: BootAnimDesc,
+        outputVideoFile: File,
+        onComplete: (Boolean) -> Unit
+    ) {
         val tempDir = File(context.cacheDir, "anim_frames_${System.currentTimeMillis()}")
         tempDir.mkdirs()
 
         try {
             var frameIndex = 0
-            context.assets.open(assetPath).use { inputStream ->
-                ZipInputStream(inputStream).use { zip ->
-                    var entry: ZipEntry? = zip.nextEntry
-                    while (entry != null) {
-                        if (entry.name.endsWith(".png")) {
-                            val frameFile = File(tempDir, "frame_%05d.png".format(frameIndex++))
-                            FileOutputStream(frameFile).use { out ->
-                                zip.copyTo(out)
-                            }
+            ZipInputStream(inputStream.buffered()).use { zip ->
+                var entry: ZipEntry? = zip.nextEntry
+                while (entry != null) {
+                    // Only take frames from the first part to keep preview generation fast
+                    val firstPartFolder = desc.parts.firstOrNull()?.folder
+                    if (firstPartFolder != null && entry.name.startsWith("$firstPartFolder/") && 
+                        (entry.name.endsWith(".png") || entry.name.endsWith(".jpg"))) {
+                        val frameFile = File(tempDir, "frame_%05d.png".format(frameIndex++))
+                        FileOutputStream(frameFile).use { out ->
+                            zip.copyTo(out)
                         }
-                        entry = zip.nextEntry
                     }
+                    if (frameIndex >= 100) break // Limit frames for preview speed
+                    entry = zip.nextEntry
                 }
             }
 
-            if (frameIndex == 0) return onComplete(false)
+            if (frameIndex == 0) {
+                tempDir.deleteRecursively()
+                return onComplete(false)
+            }
 
-            val command = "-y -framerate ${desc.fps} -i ${tempDir.absolutePath}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p ${outputVideoFile.absolutePath}"
+            val command = "-y -framerate ${desc.fps} -i ${tempDir.absolutePath}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p -preset ultrafast ${outputVideoFile.absolutePath}"
             
             FFmpegKit.executeAsync(command) { session ->
                 val returnCode = session.returnCode
