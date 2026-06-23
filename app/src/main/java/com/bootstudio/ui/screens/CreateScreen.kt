@@ -42,9 +42,9 @@ fun CreateScreen() {
     // State for inputs
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var fileName by remember { mutableStateOf("") }
-    var fps by remember { mutableStateOf("60") }
-    var width by remember { mutableStateOf("1080") }
-    var height by remember { mutableStateOf("2400") }
+    var fps by remember { mutableStateOf("") }
+    var width by remember { mutableStateOf("") }
+    var height by remember { mutableStateOf("") }
 
     var isAdvanced by remember { mutableStateOf(false) }
     var parts by remember { mutableStateOf(listOf(AnimationPartState())) }
@@ -64,23 +64,56 @@ fun CreateScreen() {
         uri?.let {
             if (!isAdvanced) fileName = it.path?.split("/")?.last() ?: "Selected File"
             
-            // Auto-detect metadata
-            try {
-                val retriever = MediaMetadataRetriever()
-                retriever.setDataSource(context, it)
-                
-                val vWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-                val vHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-                
-                val vFps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+            // Auto-detect metadata (only if not advanced OR if it's the first sequence)
+            if (!isAdvanced || activePartIndex == 0) {
+                try {
+                    val retriever = MediaMetadataRetriever()
+                    retriever.setDataSource(context, it)
+                    
+                    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                    val vWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                    val vHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                    val vFps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
 
-                if (vWidth != null) width = vWidth
-                if (vHeight != null) height = vHeight
-                if (vFps != null) fps = vFps
-                
-                retriever.release()
-            } catch (e: Exception) {
-                e.printStackTrace()
+                    if (vWidth != null && vHeight != null) {
+                        if (rotation == 90 || rotation == 270) {
+                            width = vHeight
+                            height = vWidth
+                        } else {
+                            width = vWidth
+                            height = vHeight
+                        }
+                    }
+
+                    if (vFps != null) {
+                        fps = vFps
+                    } else {
+                        // Fallback 1: Calculate from frame count (API 28+)
+                        val frameCount = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toDoubleOrNull()
+                        val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toDoubleOrNull()
+                        if (frameCount != null && duration != null && duration > 0) {
+                            fps = (frameCount / (duration / 1000.0)).toInt().toString()
+                        } else {
+                            // Fallback 2: Use MediaExtractor (More reliable for standard videos)
+                            try {
+                                val extractor = android.media.MediaExtractor()
+                                extractor.setDataSource(context, it, null)
+                                for (i in 0 until extractor.trackCount) {
+                                    val format = extractor.getTrackFormat(i)
+                                    if (format.containsKey(android.media.MediaFormat.KEY_FRAME_RATE)) {
+                                        fps = format.getInteger(android.media.MediaFormat.KEY_FRAME_RATE).toString()
+                                        break
+                                    }
+                                }
+                                extractor.release()
+                            } catch (e: Exception) {}
+                        }
+                    }
+                    
+                    retriever.release()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
@@ -143,7 +176,7 @@ fun CreateScreen() {
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    /*
+
                     if (selectedUri == null) {
                         Text(
                             text = "Video",
@@ -151,7 +184,7 @@ fun CreateScreen() {
                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
                         )
                     }
-                    */
+
 
                     if (selectedUri != null) {
                         Text(
@@ -182,7 +215,21 @@ fun CreateScreen() {
                 Text("Advanced", style = MaterialTheme.typography.labelMedium)
                 Switch(
                     checked = isAdvanced,
-                    onCheckedChange = { isAdvanced = it },
+                    onCheckedChange = { 
+                        isAdvanced = it
+                        // Reset all input sources when switching modes
+                        selectedUri = null
+                        fileName = ""
+                        fps = ""
+                        width = ""
+                        height = ""
+                        parts = listOf(AnimationPartState(
+                            type = "c",
+                            repeats = "",
+                            delay = "",
+                            folder = ""
+                        ))
+                    },
                     modifier = Modifier.scale(0.8f).padding(start = 4.dp)
                 )
             }
@@ -235,7 +282,7 @@ fun CreateScreen() {
                 )
                 Row {
                     IconButton(onClick = { 
-                        parts = parts.toMutableList().also { it.add(AnimationPartState(folder = "part${it.size}")) } 
+                        parts = parts.toMutableList().also { it.add(AnimationPartState(folder = "")) }
                     }) {
                         Icon(Icons.Default.Add, contentDescription = "Add line")
                     }
@@ -393,16 +440,7 @@ fun SequenceLine(
                     value = part.type.uppercase(),
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Type", fontSize = 8.sp) },
-                    /*
-                    trailingIcon = { 
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    },
-                     */
+                    label = { Text("Type", fontSize = 9.sp) },
                     colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
                     modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
                     shape = RoundedCornerShape(8.dp),
@@ -468,41 +506,25 @@ fun SequenceLine(
             Box(
                 modifier = Modifier
                     .weight(0.85f)
-                    .height(54.dp)
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f))
                     .clickable { onPickMedia() }
-                    .padding(4.dp),
-                contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.Add, 
-                        contentDescription = "Pick Media", 
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary
+                OutlinedTextField(
+                    value = part.uri?.path?.split("/")?.last() ?: "Select",
+                    onValueChange = {},
+                    readOnly = true,
+                    enabled = false,
+                    label = { Text("Video", fontSize = 9.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                        disabledBorderColor = MaterialTheme.colorScheme.outline,
+                        disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        disabledContainerColor = Color.Transparent
                     )
-                    /*
-                    Text(
-                        text = "Video",
-                        fontSize = 8.sp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                        fontWeight = FontWeight.Bold
-                    )
-                    */
-                    Text(
-                        text = part.uri?.path?.split("/")?.last() ?: "Select",
-                        fontSize = 7.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                )
             }
         }
     }
@@ -510,8 +532,8 @@ fun SequenceLine(
 
 data class AnimationPartState(
     val type: String = "c",
-    val repeats: String = "1",
-    val delay: String = "0",
-    val folder: String = "part0",
+    val repeats: String = "",
+    val delay: String = "",
+    val folder: String = "",
     val uri: Uri? = null
 )
