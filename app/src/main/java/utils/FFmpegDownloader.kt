@@ -2,6 +2,7 @@ package utils
 
 import android.content.Context
 import android.os.Build
+import com.arthenica.ffmpegkit.FFmpegKitConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -16,14 +17,50 @@ object FFmpegDownloader {
 
     fun isInstalled(context: Context): Boolean {
         val libDir = File(context.filesDir, "libs")
-        return File(libDir, "libffmpegkit.so").exists() && File(libDir, "libffmpeg.so").exists()
+        // Be more flexible: check if the directory exists and contains any shared libraries
+        return libDir.exists() && libDir.listFiles { _, name -> name.endsWith(".so") }?.isNotEmpty() == true
     }
 
     fun initLoader(context: Context) {
-        // Disabled manual loading to prevent SIGSEGV crashes on some devices
-        // Modern FFmpegKit handles its own loading. Manual System.load on extracted
-        // files can conflict with the library's internal initialization.
-        android.util.Log.d("FFmpegDownloader", "Manual loader initialization skipped for safety")
+        val libDir = File(context.filesDir, "libs")
+        if (libDir.exists()) {
+            val libs = libDir.listFiles { _, name -> name.endsWith(".so") }
+            
+            // Define the order in which libraries should be loaded to respect dependencies
+            val loadOrder = listOf(
+                "libffmpegkit_abidetect.so",
+                "libavutil.so",
+                "libswresample.so",
+                "libavcodec.so",
+                "libavformat.so",
+                "libswscale.so",
+                "libavfilter.so",
+                "libavdevice.so",
+                "libffmpegkit.so"
+            )
+
+            // First load from our ordered list if they exist
+            loadOrder.forEach { libName ->
+                val libFile = File(libDir, libName)
+                if (libFile.exists()) {
+                    try {
+                        android.util.Log.d("FFmpegDownloader", "Loading (ordered): ${libFile.absolutePath}")
+                        System.load(libFile.absolutePath)
+                    } catch (e: UnsatisfiedLinkError) {
+                        android.util.Log.w("FFmpegDownloader", "Could not load $libName yet: ${e.message}")
+                    }
+                }
+            }
+
+            // Then try to load any remaining libraries
+            libs?.forEach { lib ->
+                try {
+                    System.load(lib.absolutePath)
+                } catch (e: UnsatisfiedLinkError) {
+                    // Ignore, might be already loaded or handled later
+                }
+            }
+        }
     }
 
     suspend fun downloadAndInstall(context: Context, urlOverride: String? = null, onProgress: (Float, String?) -> Unit): Boolean = withContext(Dispatchers.IO) {
@@ -31,7 +68,9 @@ object FFmpegDownloader {
             val libDir = File(context.filesDir, "libs")
             if (!libDir.exists()) libDir.mkdirs()
 
+            // ... (keep download logic)
             val url = URL(urlOverride ?: BASE_URL)
+            // ... (rest of download logic until extraction)
             android.util.Log.d("FFmpegDownloader", "Connecting to: $url")
             val connection = url.openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = true
@@ -94,31 +133,41 @@ object FFmpegDownloader {
                 }
             }
 
-            // Extract .so files for current ABI
-            val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-            android.util.Log.d("FFmpegDownloader", "Extracting for ABI: $abi")
-            var extractedCount = 0
-            
+            // 1. Identify all available ABIs in the AAR
+            val availableAbis = mutableSetOf<String>()
             ZipInputStream(tempAar.inputStream()).use { zip ->
                 var entry = zip.nextEntry
                 while (entry != null) {
-                    if (entry.name.startsWith("jni/$abi/") && entry.name.endsWith(".so")) {
-                        val fileName = entry.name.substringAfterLast("/")
-                        android.util.Log.d("FFmpegDownloader", "Extracting: $fileName")
-                        val outFile = File(libDir, fileName)
-                        try {
-                            FileOutputStream(outFile).use { out ->
-                                zip.copyTo(out)
-                            }
-                            extractedCount++
-                        } catch (e: Exception) {
-                            android.util.Log.e("FFmpegDownloader", "Failed to extract $fileName", e)
-                        }
+                    if (entry.name.startsWith("jni/") && entry.name.endsWith(".so")) {
+                        val parts = entry.name.split("/")
+                        if (parts.size >= 3) availableAbis.add(parts[1])
                     }
-                    try {
-                        zip.closeEntry()
-                    } catch (e: Exception) {}
                     entry = zip.nextEntry
+                }
+            }
+
+            // 2. Select the best ABI supported by the device
+            val bestAbi = Build.SUPPORTED_ABIS.firstOrNull { availableAbis.contains(it) }
+            android.util.Log.d("FFmpegDownloader", "Best ABI available: $bestAbi")
+
+            var extractedCount = 0
+            if (bestAbi != null) {
+                // 3. Extract libraries for the best ABI
+                ZipInputStream(tempAar.inputStream()).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        if (entry.name.startsWith("jni/$bestAbi/") && entry.name.endsWith(".so")) {
+                            val fileName = entry.name.substringAfterLast("/")
+                            val outFile = File(libDir, fileName)
+                            try {
+                                FileOutputStream(outFile).use { out -> zip.copyTo(out) }
+                                extractedCount++
+                            } catch (e: Exception) {
+                                android.util.Log.e("FFmpegDownloader", "Extraction error: $fileName", e)
+                            }
+                        }
+                        entry = zip.nextEntry
+                    }
                 }
             }
 

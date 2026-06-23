@@ -24,7 +24,8 @@ data class BootAnimPart(
     val type: Char,
     val loop: Int,
     val pause: Int,
-    val folder: String
+    val folder: String,
+    var audioFile: File? = null
 )
 
 object BootAnimParser {
@@ -250,6 +251,29 @@ object BootAnimParser {
         return frameEntries.sortedBy { it.first }.map { it.second }
     }
 
+    fun getAudioForPartFromAssets(context: Context, assetPath: String, folder: String): File? {
+        try {
+            context.assets.open(assetPath).use { inputStream ->
+                ZipInputStream(inputStream).use { zip ->
+                    var entry: ZipEntry? = zip.nextEntry
+                    while (entry != null) {
+                        if (entry.name == "$folder/audio.wav") {
+                            val tempFile = File(context.cacheDir, "temp_audio_${folder}_${System.currentTimeMillis()}.wav")
+                            FileOutputStream(tempFile).use { output ->
+                                zip.copyTo(output)
+                            }
+                            return tempFile
+                        }
+                        entry = zip.nextEntry
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
+    }
+
     fun getFramesForPart(zipFile: File, folder: String): List<Bitmap> {
         val frameEntries = mutableListOf<Pair<String, Bitmap>>()
         val options = BitmapFactory.Options().apply {
@@ -273,6 +297,27 @@ object BootAnimParser {
             e.printStackTrace()
         }
         return frameEntries.sortedBy { it.first }.map { it.second }
+    }
+
+    fun getAudioForPart(zipFile: File, folder: String, context: Context): File? {
+        try {
+            ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
+                var entry: ZipEntry? = zip.nextEntry
+                while (entry != null) {
+                    if (entry.name == "$folder/audio.wav") {
+                        val tempFile = File(context.cacheDir, "temp_audio_${folder}_${System.currentTimeMillis()}.wav")
+                        FileOutputStream(tempFile).use { output ->
+                            zip.copyTo(output)
+                        }
+                        return tempFile
+                    }
+                    entry = zip.nextEntry
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return null
     }
 
     fun generateVideoPreview(context: Context, assetPath: String, outputVideoFile: File, onComplete: (Boolean) -> Unit) {

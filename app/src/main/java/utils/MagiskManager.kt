@@ -6,15 +6,29 @@ object MagiskManager {
 
     private const val MODULE_PATH = "/data/adb/modules/BootStudio/system"
 
+    private fun getModulePathForSystemFile(systemPath: String): String {
+        // If systemPath is /system/media/bootanimation.zip
+        // Magisk overlay path should be /data/adb/modules/BootStudio/system/media/bootanimation.zip
+        // So we remove the leading "/system" from the path if it exists
+        val relativePath = if (systemPath.startsWith("/system")) {
+            systemPath.substring("/system".length)
+        } else {
+            systemPath
+        }
+        return "$MODULE_PATH$relativePath"
+    }
+
     fun createMagiskModule(setupPath: String): String {
-        val targetDir = File(setupPath).parent ?: ""
+        val moduleFilePath = getModulePathForSystemFile(setupPath)
+        val targetDir = File(moduleFilePath).parent ?: MODULE_PATH
+        
         // Use the actual module root (parent of /system) for metadata files
         val moduleRoot = File(MODULE_PATH).parent ?: "/data/adb/modules/BootStudio"
         val backupFileName = setupPath.trimStart('/').replace('/', '_')
         val backupFile = "$moduleRoot/original/$backupFileName"
 
         val commands = mutableListOf(
-            "mkdir -p \"$MODULE_PATH$targetDir\"",
+            "mkdir -p \"$targetDir\"",
             "mkdir -p \"$moduleRoot/original\"",
             "if [ ! -f \"$backupFile\" ]; then cp \"$setupPath\" \"$backupFile\"; fi",
             "printf \"id=bootstudio\\nname=BootStudio Bootanimation\\nversion=1.0\\nversionCode=1\\nauthor=BootStudio\\ndescription=Custom bootanimation overlay\\n\" > $moduleRoot/module.prop",
@@ -31,11 +45,12 @@ object MagiskManager {
     }
 
     fun changeBootAnimation(zipPath: String, targetSystemPath: String): String {
-        val targetDir = File(targetSystemPath).parent ?: ""
-        val moduleZipPath = "$MODULE_PATH$targetDir/bootanimation.zip"
+        val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
+        val targetDir = File(moduleZipPath).parent ?: MODULE_PATH
+        
         val commands = listOf(
-            "rm -f $MODULE_PATH/disable",
-            "mkdir -p \"$MODULE_PATH$targetDir\"",
+            "rm -f ${File(MODULE_PATH).parent}/disable",
+            "mkdir -p \"$targetDir\"",
             "cp \"$zipPath\" \"$moduleZipPath\"",
             "chmod 644 \"$moduleZipPath\"",
             "chown root:root \"$moduleZipPath\""
@@ -44,8 +59,7 @@ object MagiskManager {
     }
 
     fun setDefaultAnimation(targetSystemPath: String): String {
-        val targetDir = File(targetSystemPath).parent ?: ""
-        val moduleZipPath = "$MODULE_PATH$targetDir/bootanimation.zip"
+        val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
         return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"")
     }
 

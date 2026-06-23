@@ -27,8 +27,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import utils.BootAnimDesc
 import utils.BootAnimParser
 import utils.BootAnimPart
@@ -38,14 +42,20 @@ import java.io.File
 @Composable
 fun PreviewScreen(zipPath: String, onBack: () -> Unit) {
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
     val scope = rememberCoroutineScope()
     val zipFile = remember { File(zipPath) }
     
+    val audioPlayer = remember { ExoPlayer.Builder(context).build() }
+
+    DisposableEffect(Unit) {
+        onDispose { audioPlayer.release() }
+    }
+
     // Get actual device metrics for a true representation
-    val deviceWidth = configuration.screenWidthDp
-    val deviceHeight = configuration.screenHeightDp
-    val deviceAspectRatio = deviceWidth.toFloat() / deviceHeight.toFloat()
+    val dm = context.resources.displayMetrics
+    val deviceWidthPx = dm.widthPixels.toFloat()
+    val deviceHeightPx = dm.heightPixels.toFloat()
+    val deviceAspectRatio = deviceWidthPx / deviceHeightPx
 
     var desc by remember { mutableStateOf<BootAnimDesc?>(null) }
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
@@ -115,26 +125,34 @@ fun PreviewScreen(zipPath: String, onBack: () -> Unit) {
                 ) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         if (currentFrame != null && desc != null) {
-                            // Calculate how the animation fits inside the actual device screen
-                            // This ensures we see the "edges" of the video vs the phone screen
-                            Image(
-                                bitmap = currentFrame!!.asImageBitmap(),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .fillMaxSize(0.98f) // Slight inner margin for realism
-                                    .aspectRatio(desc!!.width.toFloat() / desc!!.height.toFloat()),
-                                contentScale = ContentScale.Fit
-                            )
+                            // Represent the animation at its actual scale relative to the device resolution
+                            // If the animation is larger than the screen, it will be cropped
+                            BoxWithConstraints(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val animWidth = maxWidth * (desc!!.width.toFloat() / deviceWidthPx)
+                                val animHeight = maxHeight * (desc!!.height.toFloat() / deviceHeightPx)
+
+                                Image(
+                                    bitmap = currentFrame!!.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier.requiredSize(animWidth, animHeight),
+                                    contentScale = ContentScale.FillBounds
+                                )
+                            }
                         }
 
                         if (!isPlaying && !isPreparing && desc != null) {
-                            FilledIconButton(
+                            IconButton(
                                 onClick = {
                                     isPreparing = true
                                     scope.launch {
                                         playAnimation(
+                                            context = context,
                                             zipFile = zipFile,
                                             desc = desc!!,
+                                            audioPlayer = audioPlayer,
                                             onFrameUpdate = { currentFrame = it },
                                             onPartUpdate = { currentPartIndex = it },
                                             onFinished = {
@@ -150,18 +168,17 @@ fun PreviewScreen(zipPath: String, onBack: () -> Unit) {
                                         )
                                     }
                                 },
-                                modifier = Modifier.size(64.dp),
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
-                                )
+                                modifier = Modifier.size(80.dp)
                             ) {
                                 Icon(
                                     Icons.Default.PlayArrow,
                                     contentDescription = "Play",
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(64.dp),
+                                    tint = Color.White.copy(alpha = 0.7f)
                                 )
                             }
-                        } else if (desc == null || isPreparing) {
+                        }
+else if (desc == null || isPreparing) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 CircularProgressIndicator(color = Color.White.copy(alpha = 0.5f))
                                 Spacer(Modifier.height(16.dp))
@@ -233,10 +250,18 @@ fun PreviewScreen(zipPath: String, onBack: () -> Unit) {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                             items(desc!!.parts.size) { index ->
                                 val part = desc!!.parts[index]
+                                // Check if audio exists for this part
+                                var hasAudio by remember { mutableStateOf(false) }
+                                LaunchedEffect(part) {
+                                    withContext(Dispatchers.IO) {
+                                        hasAudio = BootAnimParser.getAudioForPart(zipFile, part.folder, context) != null
+                                    }
+                                }
                                 FancyStepItem(
                                     part = part,
                                     isActive = isPlaying && currentPartIndex == index,
-                                    isLast = index == desc!!.parts.size - 1
+                                    isLast = index == desc!!.parts.size - 1,
+                                    hasAudio = hasAudio
                                 )
                             }
                         }
@@ -248,7 +273,7 @@ fun PreviewScreen(zipPath: String, onBack: () -> Unit) {
 }
 
 @Composable
-fun FancyStepItem(part: BootAnimPart, isActive: Boolean, isLast: Boolean) {
+fun FancyStepItem(part: BootAnimPart, isActive: Boolean, isLast: Boolean, hasAudio: Boolean = false) {
     val activeColor = if (part.type == 'c') Color(0xFF4CAF50) else Color(0xFF2196F3)
     val color = if (isActive) activeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
     
@@ -295,6 +320,12 @@ fun FancyStepItem(part: BootAnimPart, isActive: Boolean, isLast: Boolean) {
                         color = MaterialTheme.colorScheme.tertiary.copy(alpha = if (isActive) 1f else 0.4f)
                     )
                 }
+                if (hasAudio) {
+                    InfoTag(
+                        text = "AUDIO",
+                        color = Color(0xFFFF9800).copy(alpha = if (isActive) 1f else 0.4f)
+                    )
+                }
             }
         }
     }
@@ -318,8 +349,10 @@ fun InfoTag(text: String, color: Color) {
 }
 
 private suspend fun playAnimation(
+    context: android.content.Context,
     zipFile: File,
     desc: BootAnimDesc,
+    audioPlayer: ExoPlayer,
     onFrameUpdate: (Bitmap) -> Unit,
     onPartUpdate: (Int) -> Unit,
     onFinished: () -> Unit,
@@ -327,11 +360,12 @@ private suspend fun playAnimation(
 ) {
     val frameDuration = 1000L / desc.fps
     
-    // Pre-load all frames for all parts into memory to ensure zero delay between folders
-    // Using Dispatchers.IO to keep the UI responsive during pre-loading
-    val allPartsFrames = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    // Pre-load all frames and audio for all parts
+    val allPartsData = withContext(Dispatchers.IO) {
         desc.parts.map { part ->
-            BootAnimParser.getFramesForPart(zipFile, part.folder)
+            val frames = BootAnimParser.getFramesForPart(zipFile, part.folder)
+            val audio = BootAnimParser.getAudioForPart(zipFile, part.folder, context)
+            frames to audio
         }
     }
     
@@ -339,10 +373,20 @@ private suspend fun playAnimation(
     
     desc.parts.forEachIndexed { index, part ->
         onPartUpdate(index)
-        val frames = allPartsFrames[index]
+        val (frames, audioFile) = allPartsData[index]
+        
         if (frames.isNotEmpty()) {
             val loopCount = if (part.loop == 0) 3 else part.loop 
             repeat(loopCount) {
+                // Play audio if it exists
+                if (audioFile != null) {
+                    withContext(Dispatchers.Main) {
+                        audioPlayer.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(audioFile)))
+                        audioPlayer.prepare()
+                        audioPlayer.play()
+                    }
+                }
+
                 for (frame in frames) {
                     onFrameUpdate(frame)
                     delay(frameDuration)
@@ -350,8 +394,13 @@ private suspend fun playAnimation(
                 repeat(part.pause) {
                     delay(frameDuration)
                 }
+                
+                withContext(Dispatchers.Main) {
+                    audioPlayer.stop()
+                }
             }
         }
+        audioFile?.delete() // Cleanup temp audio file
     }
     onFinished()
 }
