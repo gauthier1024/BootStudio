@@ -57,8 +57,8 @@ fun CommunityScreen() {
     val downloadingItems = remember { mutableStateListOf<String>() }
 
     // Use raw.githubusercontent.com for direct access to files
-    val jsonUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/Creating_the_app/BootAnimations/bootanimations.json"
-    val baseUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/Creating_the_app/BootAnimations/"
+    val jsonUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/BootAnimations/bootanimations.json"
+    val baseUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/BootAnimations/"
 
     val imageLoader = remember {
         ImageLoader.Builder(context)

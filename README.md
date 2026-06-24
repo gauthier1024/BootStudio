@@ -1,6 +1,18 @@
 # BootStudio
 
-BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly, using Magisk and Shizuku.
+BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly, using Magisk.
+
+<details>
+<summary>Click to see screenshots</summary>
+
+<p align="center">
+  <img src="github_assets/Screenshot_BootStudio_0.png" width="20%">
+  <img src="github_assets/Screenshot_BootStudio_1.png" width="20%">
+  <img src="github_assets/Screenshot_BootStudio_2.png" width="20%">
+  <img src="github_assets/Screenshot_BootStudio_3.png" width="20%">
+</p>
+
+</details>
 
 ## Features
 
