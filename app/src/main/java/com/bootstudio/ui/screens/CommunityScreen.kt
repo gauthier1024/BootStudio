@@ -11,7 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -241,7 +241,7 @@ fun CommunityAnimationCard(
             } else {
                 IconButton(onClick = onDownload) {
                     Icon(
-                        imageVector = Icons.Default.Download,
+                        imageVector = Icons.Default.Add,
                         contentDescription = "Download",
                         tint = MaterialTheme.colorScheme.primary
                     )

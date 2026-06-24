@@ -25,6 +25,10 @@ android {
         }
     }
 
+    androidResources {
+        localeFilters += "en"
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -36,6 +40,13 @@ android {
         }
     }
     packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE*"
+            excludes += "/META-INF/NOTICE*"
+            excludes += "/META-INF/*.kotlin_module"
+        }
         jniLibs {
             // Exclude all FFmpeg-related native libraries from the APK
             // since they are downloaded at runtime.
@@ -88,7 +99,6 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.material.icons.core)
-    implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)

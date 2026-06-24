@@ -8,7 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
@@ -100,7 +100,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         .fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Icon(Icons.Default.Description, contentDescription = null)
+                    Icon(Icons.Default.Edit, contentDescription = null)
                     Column {
                         Text(text = "Export Diagnostic Log", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Text(text = "Save log.txt to Downloads for debugging", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -7,7 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -127,12 +127,12 @@ fun SelectPathStep(
 ) {
     Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
         Text(
-            "Multiple files found.",
+            if (foundPaths.size == 1) "Single file found." else "Multiple files found.",
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground
         )
         Text(
-            "Please select the active boot animation for your ROM:",
+            if (foundPaths.size == 1) "Verify the active boot animation for your ROM:" else "Please select the active boot animation for your ROM:",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -251,7 +251,7 @@ fun DoneStep(
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
-            Icons.Default.CheckCircle,
+            Icons.Default.Check,
             contentDescription = null,
             tint = Color(0xFF4CAF50),
             modifier = Modifier.size(64.dp)
