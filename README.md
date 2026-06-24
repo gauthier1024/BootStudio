@@ -6,11 +6,11 @@ BootStudio is an Android application for managing and customizing boot animation
 <summary><strong>📷 Click to see screenshots</strong></summary>
 
 <p align="center">
-  <img src="github_assets/Screenshot_BootStudio_0.png" width="20%">
-  <img src="github_assets/Screenshot_BootStudio_1.png" width="20%">
-  <img src="github_assets/Screenshot_BootStudio_2.png" width="20%">
-  <img src="github_assets/Screenshot_BootStudio_3.png" width="20%">
-  <img src="github_assets/Screenshot_BootStudio_4.png" width="20%">
+  <img src="github_assets/Screenshot_BootStudio_0.png" width="18%">
+  <img src="github_assets/Screenshot_BootStudio_1.png" width="18%">
+  <img src="github_assets/Screenshot_BootStudio_2.png" width="18%">
+  <img src="github_assets/Screenshot_BootStudio_3.png" width="18%">
+  <img src="github_assets/Screenshot_BootStudio_4.png" width="18%">
 </p>
 
 </details>
