@@ -1,7 +1,12 @@
 package com.bootstudio.ui.screens
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
 import android.net.Uri
+import android.os.Build
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -62,17 +67,17 @@ data class BootAnimation(
     val path: String,
     val isAsset: Boolean,
     val tag: String? = null,
-    val preview: Bitmap? = null,
-    val videoUri: Uri? = null,
+    val previewUri: Uri? = null,
     val resolution: String? = null,
-    val isNonStandard: Boolean = false
+    val isNonStandard: Boolean = false,
+    val generationFailed: Boolean = false
 )
 
 @Composable
 fun HomeScreen(onPreview: (String) -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var animations by remember { mutableStateOf<List<BootAnimation>>(emptyList()) }
+    val animations = remember { mutableStateListOf<BootAnimation>() }
     var playingAnim by remember { mutableStateOf<BootAnimation?>(null) }
     var systemAnimToUse by remember { mutableStateOf<String?>(null) }
     var savedSystemPath by remember { mutableStateOf<String?>(null) }
@@ -140,21 +145,60 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                 initialAnims.add(BootAnimation(name = file.nameWithoutExtension, path = file.absolutePath, isAsset = false, tag = "Created"))
             }
         }
-        animations = initialAnims
+        animations.clear()
+        animations.addAll(initialAnims)
 
         // Metadata loading
         withContext(Dispatchers.IO) {
             if (FFmpegDownloader.isInstalled(context)) FFmpegDownloader.initLoader(context)
+            val previewDir = File(context.filesDir, "previews")
+            if (!previewDir.exists()) previewDir.mkdirs()
+
             initialAnims.forEachIndexed { index, anim ->
                 val procPath = if (anim.tag == "System") systemAnimToUse ?: anim.path else anim.path
                 val fileToParse = if (anim.isAsset) null else File(procPath)
                 val desc = if (anim.isAsset) BootAnimParser.parseDescFromAssets(context, anim.path) else BootAnimParser.parseDesc(context, fileToParse!!)
-                val preview = if (anim.isAsset) BootAnimParser.getFirstFrame(context, anim.path) else BootAnimParser.getFirstFrameFromFile(context, fileToParse!!)
-                withContext(Dispatchers.Main) {
-                    animations = animations.toMutableList().also { list ->
-                        if (index < list.size) {
-                            list[index] = list[index].copy(preview = preview, resolution = desc?.let { "${it.width}x${it.height}" }, isNonStandard = desc?.isStandard == false)
+
+                // GIF Preview Generation
+                val previewFileName = if (anim.isAsset) {
+                    anim.path.replace("/", "_") + ".gif"
+                } else if (anim.tag == "System") {
+                    // For system animation, use a name that identifies it as the original backup
+                    val backupFileName = anim.path.trimStart('/').replace('/', '_')
+                    "original_$backupFileName.gif"
+                } else {
+                    val file = File(procPath)
+                    "${file.nameWithoutExtension}_${file.length()}_${file.lastModified()}.gif"
+                }
+                val previewFile = File(previewDir, previewFileName)
+
+                if (!previewFile.exists()) {
+                    val onComplete: (Boolean) -> Unit = { success ->
+                        scope.launch {
+                            val idx = animations.indexOfFirst { it.path == anim.path }
+                            if (idx != -1) {
+                                animations[idx] = animations[idx].copy(
+                                    previewUri = if (success) Uri.fromFile(previewFile) else null,
+                                    generationFailed = !success
+                                )
+                            }
                         }
+                    }
+                    if (anim.isAsset) {
+                        BootAnimParser.generatePreviewGifFromAssets(context, anim.path, previewFile, onComplete)
+                    } else {
+                        BootAnimParser.generatePreviewGif(context, File(procPath), previewFile, onComplete)
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    val idx = animations.indexOfFirst { it.path == anim.path }
+                    if (idx != -1) {
+                        animations[idx] = animations[idx].copy(
+                            resolution = desc?.let { "${it.width}x${it.height}" },
+                            isNonStandard = desc?.isStandard == false,
+                            previewUri = if (previewFile.exists()) Uri.fromFile(previewFile) else animations[idx].previewUri
+                        )
                     }
                 }
             }
@@ -182,7 +226,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                             }
                         }
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Exported successfully!", Toast.LENGTH_SHORT).show()
+                            // Export successful
                         }
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
@@ -217,7 +261,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                     }
                 }
                 loadAnimations()
-                Toast.makeText(context, "Animation imported!", Toast.LENGTH_SHORT).show()
+                // Imported successfully
             }
         }
     }
@@ -249,7 +293,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(animations) { anim ->
+                    items(animations, key = { it.path }) { anim ->
                         val isApplied = if (anim.tag == "System") {
                             appliedPath == "system_default"
                         } else {
@@ -277,22 +321,15 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                                 }
                             },
                             onApply = {
-                                scope.launch {
-                                    val currentPrefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
-                                    val currentPath = savedSystemPath ?: return@launch
+                                if (!isApplied) {
+                                    scope.launch {
+                                        val currentPrefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
+                                        val currentPath = savedSystemPath ?: return@launch
 
-                                    if (isApplied) {
-                                        // If already applied, clicking it again removes it (reverts to system)
-                                        withContext(Dispatchers.IO) { MagiskManager.setDefaultAnimation(currentPath) }
-                                        appliedPath = "system_default"
-                                        currentPrefs.edit().putString("applied_anim_path", "system_default").apply()
-                                        Toast.makeText(context, "System animation restored", Toast.LENGTH_SHORT).show()
-                                    } else {
                                         if (anim.tag == "System") {
                                             withContext(Dispatchers.IO) { MagiskManager.setDefaultAnimation(currentPath) }
                                             appliedPath = "system_default"
                                             currentPrefs.edit().putString("applied_anim_path", "system_default").apply()
-                                            Toast.makeText(context, "System animation selected", Toast.LENGTH_SHORT).show()
                                         } else {
                                             val sourcePath = if (anim.isAsset) {
                                                 val file = File(context.cacheDir, anim.path.split("/").last())
@@ -308,12 +345,17 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                                             withContext(Dispatchers.IO) { MagiskManager.changeBootAnimation(sourcePath, currentPath) }
                                             appliedPath = anim.path
                                             currentPrefs.edit().putString("applied_anim_path", anim.path).apply()
-                                            Toast.makeText(context, "Animation applied", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 }
                             },
-                            onLongClick = { showActionDialog = anim }
+                            onLongClick = { showActionDialog = anim },
+                            onPreviewFailed = {
+                                val idx = animations.indexOfFirst { it.path == anim.path }
+                                if (idx != -1) {
+                                    animations[idx] = animations[idx].copy(generationFailed = true)
+                                }
+                            }
                         )
                     }
                 }
@@ -522,7 +564,8 @@ fun AnimationCard(
     isApplied: Boolean,
     onPlay: () -> Unit,
     onApply: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onPreviewFailed: () -> Unit = {}
 ) {
     Card(
         modifier = Modifier
@@ -544,7 +587,7 @@ fun AnimationCard(
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 1. Preview Image with Play Button
+            // 1. Preview GIF with Play Button fallback
             Box(
                 modifier = Modifier
                     .size(84.dp)
@@ -552,21 +595,17 @@ fun AnimationCard(
                     .background(Color.Black)
                     .clickable { onPlay() }
             ) {
-                if (animation.preview != null) {
-                    Image(
-                        bitmap = animation.preview.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
+                if (animation.previewUri != null && !animation.generationFailed) {
+                    GifPreview(animation.previewUri, onLoadingFailed = onPreviewFailed)
+                } else if (animation.generationFailed) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.5f))
+                    }
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
                 }
-
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Play",
-                    tint = Color.White.copy(alpha = 0.8f),
-                    modifier = Modifier.align(Alignment.Center).size(32.dp)
-                )
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -682,34 +721,60 @@ fun AnimationCard(
     }
 }
 
-@OptIn(UnstableApi::class)
 @Composable
-fun VideoPreview(uri: Uri) {
+fun GifPreview(uri: Uri, onLoadingFailed: () -> Unit = {}) {
     val context = LocalContext.current
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(uri))
-            repeatMode = Player.REPEAT_MODE_ALL
-            playWhenReady = true
-            prepare()
-            volume = 0f // Mute preview
+    val drawableState = remember(uri) { mutableStateOf<android.graphics.drawable.Drawable?>(null) }
+
+    LaunchedEffect(uri) {
+        withContext(Dispatchers.IO) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val source = ImageDecoder.createSource(context.contentResolver, uri)
+                    val drawable = ImageDecoder.decodeDrawable(source)
+                    if (drawable is AnimatedImageDrawable) {
+                        drawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                        drawable.start()
+                    }
+                    withContext(Dispatchers.Main) {
+                        drawableState.value = drawable
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    onLoadingFailed()
+                }
+            }
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
-    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            factory = {
+                ImageView(context).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                }
+            },
+            update = { imageView ->
+                val drawable = drawableState.value
+                if (drawable != null) {
+                    if (imageView.drawable != drawable) {
+                        imageView.setImageDrawable(drawable)
+                    }
+                } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+                    imageView.setImageURI(uri)
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
 
-    AndroidView(
-        factory = {
-            PlayerView(context).apply {
-                player = exoPlayer
-                useController = false
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        if (drawableState.value == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             }
-        },
-        modifier = Modifier.fillMaxSize()
-    )
+        }
+    }
 }
 
 @Composable

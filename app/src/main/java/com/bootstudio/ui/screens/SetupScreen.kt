@@ -196,8 +196,7 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
 
                     SetupStep.ASK_DOWNLOAD_FFMPEG -> {
                         AskDownloadStep(
-                            onDownloadClick = { startDownload() },
-                            onLaterClick = { currentStep = SetupStep.DONE }
+                            onDownloadClick = { startDownload() }
                         )
                     }
 

@@ -7,15 +7,10 @@ object MagiskManager {
     private const val MODULE_PATH = "/data/adb/modules/BootStudio/system"
 
     private fun getModulePathForSystemFile(systemPath: String): String {
-        // If systemPath is /system/media/bootanimation.zip
-        // Magisk overlay path should be /data/adb/modules/BootStudio/system/media/bootanimation.zip
-        // So we remove the leading "/system" from the path if it exists
-        val relativePath = if (systemPath.startsWith("/system")) {
-            systemPath.substring("/system".length)
-        } else {
-            systemPath
-        }
-        return "$MODULE_PATH$relativePath"
+        val path = systemPath.trim()
+        // Magisk modules usually expect all system overlays to be under the /system folder of the module,
+        // mirroring the full path from the root.
+        return "/data/adb/modules/BootStudio/system$path"
     }
 
     fun createMagiskModule(setupPath: String): String {
@@ -45,6 +40,20 @@ object MagiskManager {
     }
 
     fun changeBootAnimation(zipPath: String, targetSystemPath: String): String {
+        val path = targetSystemPath.trim()
+        
+        // Handle /data paths directly (Magisk cannot overlay /data)
+        if (path.startsWith("/data/")) {
+            val targetDir = File(path).parent ?: "/data/misc/bootanim"
+            val commands = listOf(
+                "mkdir -p \"$targetDir\"",
+                "cp \"$zipPath\" \"$path\"",
+                "chmod 644 \"$path\"",
+                "chown root:root \"$path\""
+            )
+            return CommandExecutor.executeWithSu(commands.joinToString(" && "))
+        }
+
         val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
         val targetDir = File(moduleZipPath).parent ?: MODULE_PATH
         
@@ -59,6 +68,12 @@ object MagiskManager {
     }
 
     fun setDefaultAnimation(targetSystemPath: String): String {
+        val path = targetSystemPath.trim()
+        if (path.startsWith("/data/")) {
+            // For /data paths, we should restore from backup if we have one, 
+            // but for now we just remove it to revert to system default
+            return CommandExecutor.executeWithSu("rm -f \"$path\"")
+        }
         val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
         return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"")
     }

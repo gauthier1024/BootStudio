@@ -178,8 +178,7 @@ fun SelectPathStep(
 
 @Composable
 fun AskDownloadStep(
-    onDownloadClick: () -> Unit,
-    onLaterClick: () -> Unit
+    onDownloadClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
@@ -196,7 +195,7 @@ fun AskDownloadStep(
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "FFmpeg is required to process videos. You can download it now or later in settings.",
+            "FFmpeg is MANDATORY to process videos and generate previews. You must download it to continue.",
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -206,12 +205,6 @@ fun AskDownloadStep(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Download Now")
-        }
-        TextButton(
-            onClick = onLaterClick,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Do it Later")
         }
     }
 }

@@ -99,9 +99,7 @@ fun CreateScreen() {
                 onStart = { isGenerating = true },
                 onComplete = { success: Boolean ->
                     isGenerating = false
-                    if (success) {
-                        Toast.makeText(context, "Animation created successfully!", Toast.LENGTH_LONG).show()
-                    } else {
+                    if (!success) {
                         Toast.makeText(context, "Failed to create animation.", Toast.LENGTH_LONG).show()
                     }
                 }
@@ -548,9 +546,7 @@ fun CreateScreen() {
                                 onStart = { isGenerating = true },
                                 onComplete = { success: Boolean ->
                                     isGenerating = false
-                                    if (success) {
-                                        Toast.makeText(context, "Animation created successfully!", Toast.LENGTH_LONG).show()
-                                    } else {
+                                    if (!success) {
                                         Toast.makeText(context, "Failed to create animation.", Toast.LENGTH_LONG).show()
                                     }
                                 }

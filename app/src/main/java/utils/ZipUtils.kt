@@ -63,22 +63,16 @@ object ZipUtils {
     }
 
     private fun zipFolder(folder: File, parentName: String, zos: ZipOutputStream) {
-        // Add the folder entry itself
-        val folderEntry = ZipEntry("$parentName/")
-        folderEntry.size = 0
-        folderEntry.compressedSize = 0
-        folderEntry.crc = 0
-        zos.putNextEntry(folderEntry)
-        zos.closeEntry()
-
-        folder.listFiles()?.forEach { file ->
+        // Many bootanim implementations don't like folder entries, only files
+        folder.listFiles()?.sortedBy { it.name }?.forEach { file ->
             if (file.isDirectory) {
                 zipFolder(file, "$parentName/${file.name}", zos)
             } else {
                 val entryName = "$parentName/${file.name}"
-                val entry = ZipEntry(entryName)
                 val bytes = file.readBytes()
+                val entry = ZipEntry(entryName)
                 
+                entry.method = ZipOutputStream.STORED
                 entry.size = bytes.size.toLong()
                 entry.compressedSize = bytes.size.toLong()
                 entry.crc = calculateCRC32(bytes)

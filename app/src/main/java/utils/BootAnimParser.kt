@@ -75,157 +75,54 @@ object BootAnimParser {
         val parts = firstLine.split(" ").filter { it.isNotBlank() }
         if (parts.size < 3) return null
 
-        val width = parts[0].toInt()
-        val height = parts[1].toInt()
-        val fps = parts[2].toInt()
+        val width = try { parts[0].toInt() } catch (e: Exception) { 0 }
+        val height = try { parts[1].toInt() } catch (e: Exception) { 0 }
+        val fps = try { parts[2].toInt() } catch (e: Exception) { 30 }
 
         val animParts = mutableListOf<BootAnimPart>()
         var isStandard = true
         var line: String? = reader.readLine()
         while (line != null) {
             val trimmedLine = line.trim()
-            if (trimmedLine.isNotEmpty()) {
+            if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("#")) {
                 val lineParts = trimmedLine.split(" ").filter { it.isNotBlank() }
-                // Standard parts start with 'p' or 'c'
-                if (lineParts.size >= 4 && (lineParts[0] == "p" || lineParts[0] == "c")) {
+
+                // A valid part line usually has at least 4 components: type loop pause folder
+                if (lineParts.size >= 4) {
+                    val typeChar = lineParts[0][0]
+
                     try {
+                        // Check if the first three parts are numbers to identify a valid animation part line
+                        val loop = lineParts[1].toInt()
+                        val pause = lineParts[2].toInt()
+                        val folder = lineParts[3]
+
                         animParts.add(
                             BootAnimPart(
-                                type = lineParts[0][0],
-                                loop = lineParts[1].toInt(),
-                                pause = lineParts[2].toInt(),
-                                folder = lineParts[3]
+                                type = typeChar,
+                                loop = loop,
+                                pause = pause,
+                                folder = folder
                             )
                         )
-                    } catch (e: NumberFormatException) {
+
+                        if (typeChar != 'p' && typeChar != 'c') {
+                            isStandard = false
+                        }
+                    } catch (e: Exception) {
+                        // Not a standard animation part line (e.g., dynamic_colors, level, etc.)
+                        // We just ignore it and continue
                         isStandard = false
                     }
                 } else {
-                    // Line found that doesn't match standard part format
-                    isStandard = false
+                    // Line with fewer than 4 parts, could be a comment or special command
+                    if (lineParts.isNotEmpty()) isStandard = false
                 }
             }
             line = reader.readLine()
         }
 
         return BootAnimDesc(width, height, fps, animParts, isStandard)
-    }
-
-    fun getFirstFrame(context: Context, assetPath: String): Bitmap? {
-        val cacheKey = assetPath.replace("/", "_") + ".thumb"
-        val cacheFile = File(context.cacheDir, cacheKey)
-        if (cacheFile.exists()) {
-            return BitmapFactory.decodeFile(cacheFile.absolutePath)
-        }
-
-        return try {
-            context.assets.open(assetPath).use { inputStream ->
-                val bitmap = getFirstFrameFromStream(inputStream)
-                bitmap?.let {
-                    FileOutputStream(cacheFile).use { out ->
-                        it.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                    }
-                }
-                bitmap
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    fun getFirstFrameFromFile(context: Context, file: File): Bitmap? {
-        val cacheKey = file.absolutePath.replace("/", "_") + ".thumb"
-        val cacheFile = File(context.cacheDir, cacheKey)
-        if (cacheFile.exists()) {
-            return BitmapFactory.decodeFile(cacheFile.absolutePath)
-        }
-
-        return try {
-            file.inputStream().use { inputStream ->
-                val bitmap = getFirstFrameFromStream(inputStream)
-                bitmap?.let {
-                    FileOutputStream(cacheFile).use { out ->
-                        it.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                    }
-                }
-                bitmap
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun getFirstFrameFromStream(inputStream: InputStream): Bitmap? {
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.RGB_565
-            inSampleSize = 2
-        }
-
-        val sampledFramesData = mutableListOf<ByteArray>()
-        
-        ZipInputStream(inputStream.buffered()).use { zip ->
-            var entry: ZipEntry? = zip.nextEntry
-            var count = 0
-            while (entry != null) {
-                if (entry.name.endsWith(".png") || entry.name.endsWith(".jpg")) {
-                    if (count % 25 == 0) {
-                        sampledFramesData.add(zip.readBytes())
-                    }
-                    count++
-                }
-                if (sampledFramesData.size >= 15) break
-                entry = zip.nextEntry
-            }
-        }
-
-        var bestBitmap: Bitmap? = null
-        var maxVibrancyScore = -1.0
-
-        for (frameData in sampledFramesData) {
-            val bitmap = BitmapFactory.decodeByteArray(frameData, 0, frameData.size, options)
-            if (bitmap != null) {
-                val score = calculateVisualVibrancy(bitmap)
-                if (score > maxVibrancyScore) {
-                    maxVibrancyScore = score
-                    bestBitmap?.recycle()
-                    bestBitmap = bitmap
-                } else {
-                    bitmap.recycle()
-                }
-            }
-        }
-        return bestBitmap
-    }
-
-    private fun calculateVisualVibrancy(bitmap: Bitmap): Double {
-        val width = bitmap.width
-        val height = bitmap.height
-        val sampleSize = 20
-        var totalNonextremePixels = 0
-        var totalSampled = 0
-        
-        val darkThreshold = 30
-        val lightThreshold = 225
-        
-        for (y in 0 until height step sampleSize) {
-            for (x in 0 until width step sampleSize) {
-                totalSampled++
-                val pixel = bitmap.getPixel(x, y)
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                
-                val isNotBlack = r > darkThreshold || g > darkThreshold || b > darkThreshold
-                val isNotWhite = r < lightThreshold || g < lightThreshold || b < lightThreshold
-                
-                if (isNotBlack && isNotWhite) {
-                    totalNonextremePixels++
-                }
-            }
-        }
-        
-        if (totalSampled == 0) return 0.0
-        return totalNonextremePixels.toDouble() / totalSampled.toDouble()
     }
 
     fun getFramesForPartFromAssets(context: Context, assetPath: String, folder: String): List<Bitmap> {
@@ -320,23 +217,11 @@ object BootAnimParser {
         return null
     }
 
-    fun generateVideoPreview(context: Context, assetPath: String, outputVideoFile: File, onComplete: (Boolean) -> Unit) {
-        val desc = parseDescFromAssets(context, assetPath) ?: return onComplete(false)
-        try {
-            context.assets.open(assetPath).use { inputStream ->
-                generateVideoFromStream(context, inputStream, desc, outputVideoFile, onComplete)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            onComplete(false)
-        }
-    }
-
-    fun generateVideoPreviewFromFile(context: Context, zipFile: File, outputVideoFile: File, onComplete: (Boolean) -> Unit) {
+    fun generatePreviewGif(context: Context, zipFile: File, outputGifFile: File, onComplete: (Boolean) -> Unit) {
         val desc = parseDesc(context, zipFile) ?: return onComplete(false)
         try {
             zipFile.inputStream().use { inputStream ->
-                generateVideoFromStream(context, inputStream, desc, outputVideoFile, onComplete)
+                generatePreviewGifFromStream(context, inputStream, desc, outputGifFile, onComplete)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -344,46 +229,92 @@ object BootAnimParser {
         }
     }
 
-    private fun generateVideoFromStream(
+    fun generatePreviewGifFromAssets(context: Context, assetPath: String, outputGifFile: File, onComplete: (Boolean) -> Unit) {
+        val desc = parseDescFromAssets(context, assetPath) ?: return onComplete(false)
+        try {
+            context.assets.open(assetPath).use { inputStream ->
+                generatePreviewGifFromStream(context, inputStream, desc, outputGifFile, onComplete)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onComplete(false)
+        }
+    }
+
+    private fun generatePreviewGifFromStream(
         context: Context,
         inputStream: InputStream,
         desc: BootAnimDesc,
-        outputVideoFile: File,
+        outputGifFile: File,
         onComplete: (Boolean) -> Unit
     ) {
-        val tempDir = File(context.cacheDir, "anim_frames_${System.currentTimeMillis()}")
+        val tempDir = File(context.cacheDir, "preview_frames_${System.currentTimeMillis()}")
         tempDir.mkdirs()
 
         try {
-            var frameIndex = 0
-            ZipInputStream(inputStream.buffered()).use { zip ->
+            val folders = desc.parts.map { it.folder }.toSet()
+
+            // Optimization: Load stream into memory to avoid repeated extraction/seeking if possible
+            val zipData = inputStream.readBytes()
+
+            // 1. Count total frames to calculate step
+            var totalAvailableFrames = 0
+            ZipInputStream(zipData.inputStream()).use { zip ->
                 var entry: ZipEntry? = zip.nextEntry
                 while (entry != null) {
-                    // Only take frames from the first part to keep preview generation fast
-                    val firstPartFolder = desc.parts.firstOrNull()?.folder
-                    if (firstPartFolder != null && entry.name.startsWith("$firstPartFolder/") && 
-                        (entry.name.endsWith(".png") || entry.name.endsWith(".jpg"))) {
-                        val frameFile = File(tempDir, "frame_%05d.png".format(frameIndex++))
-                        FileOutputStream(frameFile).use { out ->
-                            zip.copyTo(out)
-                        }
+                    val entryName = entry.name
+                    val folder = folders.find { entryName.startsWith("$it/") }
+                    if (folder != null && (entryName.endsWith(".png") || entryName.endsWith(".jpg"))) {
+                        totalAvailableFrames++
                     }
-                    if (frameIndex >= 100) break // Limit frames for preview speed
                     entry = zip.nextEntry
                 }
             }
 
-            if (frameIndex == 0) {
+            if (totalAvailableFrames == 0) {
                 tempDir.deleteRecursively()
-                return onComplete(false)
+                onComplete(false)
+                return
             }
 
-            val command = "-y -framerate ${desc.fps} -i ${tempDir.absolutePath}/frame_%05d.png -c:v libx264 -pix_fmt yuv420p -preset ultrafast ${outputVideoFile.absolutePath}"
-            
-            FFmpegKit.executeAsync(command) { session ->
-                val returnCode = session.returnCode
+            val maxGifFrames = 50
+            val step = if (totalAvailableFrames > maxGifFrames) (totalAvailableFrames / maxGifFrames) + 1 else 1
+
+            // 2. Extract selected frames
+            var globalCounter = 0
+            var finalFrameIndex = 0
+            ZipInputStream(zipData.inputStream()).use { zip ->
+                var entry: ZipEntry? = zip.nextEntry
+                while (entry != null) {
+                    val entryName = entry.name
+                    val folder = folders.find { entryName.startsWith("$it/") }
+                    if (folder != null && (entryName.endsWith(".png") || entryName.endsWith(".jpg"))) {
+                        if (globalCounter % step == 0 && finalFrameIndex < maxGifFrames) {
+                            val frameFile = File(tempDir, "frame_%05d.png".format(finalFrameIndex++))
+                            FileOutputStream(frameFile).use { out -> zip.copyTo(out) }
+                        }
+                        globalCounter++
+                    }
+                    entry = zip.nextEntry
+                }
+            }
+
+            if (finalFrameIndex == 0) {
                 tempDir.deleteRecursively()
-                onComplete(returnCode.isValueSuccess)
+                onComplete(false)
+                return
+            }
+
+            // 3. Generate GIF with extreme compatibility settings
+            val gifFps = (desc.fps * 1.5).toInt().coerceIn(15, 30)
+
+            // scale=128:-2 (very small, very safe), max_colors=64
+            // format=rgb24 ensures alpha channel is flattened to black
+            val command = "-y -framerate $gifFps -i ${tempDir.absolutePath}/frame_%05d.png -vf \"scale=128:-2:flags=fast_bilinear,format=rgb24,split[s0][s1];[s0]palettegen=max_colors=64[p];[s1][p]paletteuse\" ${outputGifFile.absolutePath}"
+
+            FFmpegKit.executeAsync(command) { session ->
+                tempDir.deleteRecursively()
+                onComplete(session.returnCode.isValueSuccess)
             }
         } catch (e: Exception) {
             e.printStackTrace()
