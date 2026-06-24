@@ -787,6 +787,14 @@ private suspend fun generateBootAnimation(
 
             val zipSuccess = ZipUtils.zipBootAnimation(part0Dir, descFile, outputFile)
 
+            if (zipSuccess) {
+                context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
+                    .edit()
+                    .putString("${outputFile.name}_tag", "Created")
+                    .putString("${outputFile.name}_creator", "Me")
+                    .apply()
+            }
+
             // Clean up
             workDir.deleteRecursively()
 
@@ -886,6 +894,14 @@ private suspend fun generateAdvancedBootAnimation(
             // We need a Zip utility that can zip multiple folders and a file
             // Let's check ZipUtils.kt
             val zipSuccess = ZipUtils.zipAdvancedBootAnimation(workDir, descFile, outputFile)
+
+            if (zipSuccess) {
+                context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
+                    .edit()
+                    .putString("${outputFile.name}_tag", "Created")
+                    .putString("${outputFile.name}_creator", "Me")
+                    .apply()
+            }
 
             workDir.deleteRecursively()
 

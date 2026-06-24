@@ -3,7 +3,9 @@ package utils
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
@@ -29,17 +31,18 @@ data class BootAnimPart(
 )
 
 object BootAnimParser {
-    // ... rest of the code
 
-    fun parseDesc(context: Context, zipFile: File): BootAnimDesc? {
+    fun parseDesc(zipFile: File): BootAnimDesc? {
         return try {
-            ZipInputStream(zipFile.inputStream()).use { zip ->
-                var entry: ZipEntry? = zip.nextEntry
-                while (entry != null) {
-                    if (entry.name == "desc.txt") {
-                        return readDescFile(zip)
+            zipFile.inputStream().use { inputStream ->
+                ZipInputStream(inputStream).use { zip ->
+                    var entry: ZipEntry? = zip.nextEntry
+                    while (entry != null) {
+                        if (entry.name == "desc.txt") {
+                            return readDescFile(zip)
+                        }
+                        entry = zip.nextEntry
                     }
-                    entry = zip.nextEntry
                 }
             }
             null
@@ -71,72 +74,64 @@ object BootAnimParser {
 
     private fun readDescFile(inputStream: InputStream): BootAnimDesc? {
         val reader = BufferedReader(InputStreamReader(inputStream))
-        val firstLine = reader.readLine() ?: return null
-        val parts = firstLine.split(" ").filter { it.isNotBlank() }
-        if (parts.size < 3) return null
-
-        val width = try { parts[0].toInt() } catch (e: Exception) { 0 }
-        val height = try { parts[1].toInt() } catch (e: Exception) { 0 }
-        val fps = try { parts[2].toInt() } catch (e: Exception) { 30 }
-
+        var width = 0
+        var height = 0
+        var fps = 30
         val animParts = mutableListOf<BootAnimPart>()
         var isStandard = true
-        var line: String? = reader.readLine()
+        var resolutionFound = false
+
+        var line = reader.readLine()
         while (line != null) {
-            val trimmedLine = line.trim()
-            if (trimmedLine.isNotEmpty() && !trimmedLine.startsWith("#")) {
-                val lineParts = trimmedLine.split(" ").filter { it.isNotBlank() }
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                line = reader.readLine()
+                continue
+            }
 
-                // A valid part line usually has at least 4 components: type loop pause folder
-                if (lineParts.size >= 4) {
-                    val typeChar = lineParts[0][0]
+            val parts = trimmed.split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (!resolutionFound) {
+                if (parts.size >= 3) {
+                    width = parts[0].toIntOrNull() ?: 0
+                    height = parts[1].toIntOrNull() ?: 0
+                    fps = parts[2].toIntOrNull() ?: 30
+                    resolutionFound = true
+                }
+            } else {
+                if (parts.size >= 4) {
+                    val typeChar = parts[0][0].lowercaseChar()
+                    val loop = parts[1].toIntOrNull()
+                    val pause = parts[2].toIntOrNull()
+                    val folder = parts[3].removePrefix("./").removePrefix(".\\")
 
-                    try {
-                        // Check if the first three parts are numbers to identify a valid animation part line
-                        val loop = lineParts[1].toInt()
-                        val pause = lineParts[2].toInt()
-                        val folder = lineParts[3]
-
-                        animParts.add(
-                            BootAnimPart(
-                                type = typeChar,
-                                loop = loop,
-                                pause = pause,
-                                folder = folder
-                            )
-                        )
-
+                    if (loop != null && pause != null) {
+                        animParts.add(BootAnimPart(typeChar, loop, pause, folder))
                         if (typeChar != 'p' && typeChar != 'c') {
                             isStandard = false
                         }
-                    } catch (e: Exception) {
-                        // Not a standard animation part line (e.g., dynamic_colors, level, etc.)
-                        // We just ignore it and continue
+                    } else {
                         isStandard = false
                     }
-                } else {
-                    // Line with fewer than 4 parts, could be a comment or special command
-                    if (lineParts.isNotEmpty()) isStandard = false
+                } else if (parts.isNotEmpty()) {
+                    isStandard = false
                 }
             }
             line = reader.readLine()
         }
 
-        return BootAnimDesc(width, height, fps, animParts, isStandard)
+        return if (resolutionFound) BootAnimDesc(width, height, fps, animParts, isStandard) else null
     }
 
-    fun getFramesForPartFromAssets(context: Context, assetPath: String, folder: String): List<Bitmap> {
-        val frameEntries = mutableListOf<Pair<String, Bitmap>>()
+    fun hasAudioForPart(zipFile: File, folder: String): Boolean {
+        val folderLower = folder.lowercase().trim('/').replace("\\", "/")
         try {
-            context.assets.open(assetPath).use { inputStream ->
-                ZipInputStream(inputStream).use { zip ->
+            zipFile.inputStream().use { fis ->
+                ZipInputStream(fis.buffered()).use { zip ->
                     var entry: ZipEntry? = zip.nextEntry
                     while (entry != null) {
-                        if (entry.name.startsWith("$folder/") && (entry.name.endsWith(".png") || entry.name.endsWith(".jpg"))) {
-                            val bitmap = BitmapFactory.decodeStream(zip)
-                            if (bitmap != null) {
-                                frameEntries.add(entry.name to bitmap)
-                            }
+                        val nameLower = entry.name.lowercase().replace("\\", "/").trim('/')
+                        if (nameLower == "$folderLower/audio.wav" || nameLower == "audio.wav" && folderLower.isEmpty()) {
+                            return true
                         }
                         entry = zip.nextEntry
                     }
@@ -145,17 +140,19 @@ object BootAnimParser {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        return frameEntries.sortedBy { it.first }.map { it.second }
+        return false
     }
 
-    fun getAudioForPartFromAssets(context: Context, assetPath: String, folder: String): File? {
+    fun getAudioForPart(zipFile: File, folder: String, context: Context): File? {
+        val folderLower = folder.lowercase().trim('/').replace("\\", "/")
         try {
-            context.assets.open(assetPath).use { inputStream ->
-                ZipInputStream(inputStream).use { zip ->
+            zipFile.inputStream().use { fis ->
+                ZipInputStream(fis.buffered()).use { zip ->
                     var entry: ZipEntry? = zip.nextEntry
                     while (entry != null) {
-                        if (entry.name == "$folder/audio.wav") {
-                            val tempFile = File(context.cacheDir, "temp_audio_${folder}_${System.currentTimeMillis()}.wav")
+                        val nameLower = entry.name.lowercase().replace("\\", "/").trim('/')
+                        if (nameLower == "$folderLower/audio.wav" || nameLower == "audio.wav" && folderLower.isEmpty()) {
+                            val tempFile = File(context.cacheDir, "temp_audio_${folder.replace("/", "_").replace("\\", "_")}_${System.currentTimeMillis()}.wav")
                             FileOutputStream(tempFile).use { output ->
                                 zip.copyTo(output)
                             }
@@ -171,44 +168,23 @@ object BootAnimParser {
         return null
     }
 
-    fun getFramesForPart(zipFile: File, folder: String): List<Bitmap> {
-        val frameEntries = mutableListOf<Pair<String, Bitmap>>()
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.RGB_565
-            inMutable = false
-        }
+    fun getAudioForPartFromAssets(context: Context, assetPath: String, folder: String): File? {
+        val folderLower = folder.lowercase().trim('/').replace("\\", "/")
         try {
-            ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
-                var entry: ZipEntry? = zip.nextEntry
-                while (entry != null) {
-                    if (entry.name.startsWith("$folder/") && (entry.name.endsWith(".png") || entry.name.endsWith(".jpg"))) {
-                        val bitmap = BitmapFactory.decodeStream(zip, null, options)
-                        if (bitmap != null) {
-                            frameEntries.add(entry.name to bitmap)
+            context.assets.open(assetPath).use { fis ->
+                ZipInputStream(fis.buffered()).use { zip ->
+                    var entry: ZipEntry? = zip.nextEntry
+                    while (entry != null) {
+                        val nameLower = entry.name.lowercase().replace("\\", "/").trim('/')
+                        if (nameLower == "$folderLower/audio.wav" || nameLower == "audio.wav" && folderLower.isEmpty()) {
+                            val tempFile = File(context.cacheDir, "temp_audio_asset_${folder.replace("/", "_").replace("\\", "_")}_${System.currentTimeMillis()}.wav")
+                            FileOutputStream(tempFile).use { output ->
+                                zip.copyTo(output)
+                            }
+                            return tempFile
                         }
+                        entry = zip.nextEntry
                     }
-                    entry = zip.nextEntry
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return frameEntries.sortedBy { it.first }.map { it.second }
-    }
-
-    fun getAudioForPart(zipFile: File, folder: String, context: Context): File? {
-        try {
-            ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
-                var entry: ZipEntry? = zip.nextEntry
-                while (entry != null) {
-                    if (entry.name == "$folder/audio.wav") {
-                        val tempFile = File(context.cacheDir, "temp_audio_${folder}_${System.currentTimeMillis()}.wav")
-                        FileOutputStream(tempFile).use { output ->
-                            zip.copyTo(output)
-                        }
-                        return tempFile
-                    }
-                    entry = zip.nextEntry
                 }
             }
         } catch (e: Exception) {
@@ -218,7 +194,7 @@ object BootAnimParser {
     }
 
     fun generatePreviewGif(context: Context, zipFile: File, outputGifFile: File, onComplete: (Boolean) -> Unit) {
-        val desc = parseDesc(context, zipFile) ?: return onComplete(false)
+        val desc = parseDesc(zipFile) ?: return onComplete(false)
         try {
             zipFile.inputStream().use { inputStream ->
                 generatePreviewGifFromStream(context, inputStream, desc, outputGifFile, onComplete)
@@ -241,6 +217,19 @@ object BootAnimParser {
         }
     }
 
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height: Int, width: Int) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight: Int = height / 2
+            val halfWidth: Int = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
     private fun generatePreviewGifFromStream(
         context: Context,
         inputStream: InputStream,
@@ -248,76 +237,148 @@ object BootAnimParser {
         outputGifFile: File,
         onComplete: (Boolean) -> Unit
     ) {
-        val tempDir = File(context.cacheDir, "preview_frames_${System.currentTimeMillis()}")
-        tempDir.mkdirs()
+        DiagnosticLogger.log("=== STARTING ROBUST GIF GENERATION ===")
+        DiagnosticLogger.log("Desc: ${desc.width}x${desc.height} @ ${desc.fps}fps, Parts: ${desc.parts.size}")
+        
+        val tempDir = File(context.cacheDir, "preview_gen_${System.currentTimeMillis()}")
+        if (!tempDir.exists() && !tempDir.mkdirs()) {
+            DiagnosticLogger.log("CRITICAL: Failed to create temp directory")
+            onComplete(false)
+            return
+        }
 
         try {
-            val folders = desc.parts.map { it.folder }.toSet()
-
-            // Optimization: Load stream into memory to avoid repeated extraction/seeking if possible
-            val zipData = inputStream.readBytes()
-
-            // 1. Count total frames to calculate step
-            var totalAvailableFrames = 0
-            ZipInputStream(zipData.inputStream()).use { zip ->
-                var entry: ZipEntry? = zip.nextEntry
+            // 1. Extract ALL frames to 'raw' folder
+            ZipInputStream(inputStream.buffered()).use { zip ->
+                var entry = zip.nextEntry
                 while (entry != null) {
-                    val entryName = entry.name
-                    val folder = folders.find { entryName.startsWith("$it/") }
-                    if (folder != null && (entryName.endsWith(".png") || entryName.endsWith(".jpg"))) {
-                        totalAvailableFrames++
+                    val name = entry.name.replace("\\", "/")
+                    if (!entry.isDirectory && (name.endsWith(".png", true) || name.endsWith(".jpg", true) ||
+                                name.endsWith(".jpeg", true) || name.endsWith(".webp", true))) {
+
+                        val folderPath = name.substringBeforeLast("/", "").lowercase()
+                        val frameFolder = File(tempDir, "raw/$folderPath")
+                        if (!frameFolder.exists()) frameFolder.mkdirs()
+
+                        val frameFile = File(frameFolder, name.substringAfterLast("/"))
+                        FileOutputStream(frameFile).use { out -> zip.copyTo(out) }
                     }
                     entry = zip.nextEntry
                 }
             }
 
-            if (totalAvailableFrames == 0) {
-                tempDir.deleteRecursively()
-                onComplete(false)
-                return
+            // 2. Normalize and Flatten Sequence (Optimized)
+            var totalInSequence = 0
+            val sequenceDir = File(tempDir, "sequence").apply { mkdirs() }
+            val rawDir = File(tempDir, "raw")
+            
+            fun getAllSubdirs(file: File): List<File> {
+                val subdirs = file.listFiles { it.isDirectory }?.toList() ?: emptyList()
+                return subdirs + subdirs.flatMap { getAllSubdirs(it) }
             }
+            val availableFolders = (getAllSubdirs(rawDir) + rawDir).distinct()
 
-            val maxGifFrames = 50
-            val step = if (totalAvailableFrames > maxGifFrames) (totalAvailableFrames / maxGifFrames) + 1 else 1
+            // Calculate sampling to target ~15fps
+            val sourceFps = desc.fps.coerceAtLeast(1)
+            val samplingInterval = (sourceFps / 15).coerceAtLeast(1)
+            val maxTotalFrames = 300 // Cap total frames for speed
 
-            // 2. Extract selected frames
-            var globalCounter = 0
-            var finalFrameIndex = 0
-            ZipInputStream(zipData.inputStream()).use { zip ->
-                var entry: ZipEntry? = zip.nextEntry
-                while (entry != null) {
-                    val entryName = entry.name
-                    val folder = folders.find { entryName.startsWith("$it/") }
-                    if (folder != null && (entryName.endsWith(".png") || entryName.endsWith(".jpg"))) {
-                        if (globalCounter % step == 0 && finalFrameIndex < maxGifFrames) {
-                            val frameFile = File(tempDir, "frame_%05d.png".format(finalFrameIndex++))
-                            FileOutputStream(frameFile).use { out -> zip.copyTo(out) }
+            for ((index, part) in desc.parts.withIndex()) {
+                if (totalInSequence >= maxTotalFrames) break
+                
+                val searchFolder = part.folder.replace("\\", "/").trim('/').lowercase().removePrefix("./")
+                val matchedFolder = availableFolders.find { 
+                    val relativePath = it.absolutePath.removePrefix(rawDir.absolutePath).trim('/').lowercase()
+                    relativePath == searchFolder || relativePath.endsWith("/$searchFolder") || (searchFolder.isEmpty() && relativePath.isEmpty())
+                }
+                
+                if (matchedFolder == null) continue
+                
+                val sourceFrames = matchedFolder.listFiles()?.filter { 
+                    it.isFile && !it.name.startsWith(".") && 
+                    (it.name.endsWith(".png", true) || it.name.endsWith(".jpg", true) || 
+                     it.name.endsWith(".jpeg", true) || it.name.endsWith(".webp", true))
+                }?.sortedBy { it.name } ?: emptyList()
+
+                if (sourceFrames.isNotEmpty()) {
+                    DiagnosticLogger.log("Part $index: Sampling ${sourceFrames.size} frames (interval $samplingInterval)")
+                    
+                    val normalizedPartFrames = mutableListOf<File>()
+                    // Sample frames to save time
+                    for (i in sourceFrames.indices step samplingInterval) {
+                        val srcFile = sourceFrames[i]
+                        try {
+                            // OPTIMIZATION: Decode with scaling to 256x256 immediately
+                            val options = BitmapFactory.Options().apply {
+                                inJustDecodeBounds = true
+                            }
+                            BitmapFactory.decodeFile(srcFile.absolutePath, options)
+                            
+                            options.inSampleSize = calculateInSampleSize(options, 256, 256)
+                            options.inJustDecodeBounds = false
+                            options.inPreferredConfig = Bitmap.Config.RGB_565 // Faster decoding
+                            
+                            val bitmap = BitmapFactory.decodeFile(srcFile.absolutePath, options)
+                            if (bitmap != null) {
+                                // OPTIMIZATION: Save as JPG instead of PNG for faster I/O
+                                val normFile = File(tempDir, "norm_${index}_${i}.jpg")
+                                FileOutputStream(normFile).use { out ->
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                                }
+                                normalizedPartFrames.add(normFile)
+                                bitmap.recycle()
+                            }
+                        } catch (e: Exception) {
+                            // Skip failing frames
                         }
-                        globalCounter++
                     }
-                    entry = zip.nextEntry
+
+                    if (normalizedPartFrames.isNotEmpty()) {
+                        val loops = if (part.loop <= 0) 1 else part.loop
+                        // Cap loops to avoid massive sequences
+                        val limitedLoops = loops.coerceAtMost(3)
+                        
+                        repeat(limitedLoops) {
+                            for (normFile in normalizedPartFrames) {
+                                if (totalInSequence >= maxTotalFrames) break
+                                val dstFile = File(sequenceDir, "frame_%06d.jpg".format(totalInSequence++))
+                                normFile.copyTo(dstFile, overwrite = true)
+                            }
+                            // Simplified pause: just add a bit of time to the last frame via sampling logic
+                            // (We don't duplicate pause frames heavily for speed)
+                        }
+                    }
                 }
             }
 
-            if (finalFrameIndex == 0) {
+            DiagnosticLogger.log("Optimized Sequence: $totalInSequence frames.")
+            if (totalInSequence == 0) {
                 tempDir.deleteRecursively()
                 onComplete(false)
                 return
             }
 
-            // 3. Generate GIF with extreme compatibility settings
-            val gifFps = (desc.fps * 1.5).toInt().coerceIn(15, 30)
-
-            // scale=128:-2 (very small, very safe), max_colors=64
-            // format=rgb24 ensures alpha channel is flattened to black
-            val command = "-y -framerate $gifFps -i ${tempDir.absolutePath}/frame_%05d.png -vf \"scale=128:-2:flags=fast_bilinear,format=rgb24,split[s0][s1];[s0]palettegen=max_colors=64[p];[s1][p]paletteuse\" ${outputGifFile.absolutePath}"
+            // 3. Simple FFmpeg Command (Fast)
+            // Use the sampled rate as input
+            val inputFps = (sourceFps / samplingInterval).coerceAtLeast(1)
+            val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black,setpts=0.25*PTS,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=none\" \"${outputGifFile.absolutePath}\""
+            DiagnosticLogger.log("FFmpeg CMD: $command")
 
             FFmpegKit.executeAsync(command) { session ->
-                tempDir.deleteRecursively()
-                onComplete(session.returnCode.isValueSuccess)
+                if (ReturnCode.isSuccess(session.returnCode)) {
+                    DiagnosticLogger.log("SUCCESS: GIF saved to ${outputGifFile.absolutePath}")
+                    tempDir.deleteRecursively()
+                    onComplete(true)
+                } else {
+                    DiagnosticLogger.log("FFMPEG FAILURE (RC ${session.returnCode}):")
+                    DiagnosticLogger.log(session.allLogsAsString)
+                    tempDir.deleteRecursively()
+                    onComplete(false)
+                }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            DiagnosticLogger.log("JAVA EXCEPTION: ${e.message}")
+            e.stackTrace.forEach { DiagnosticLogger.log("  at $it") }
             tempDir.deleteRecursively()
             onComplete(false)
         }

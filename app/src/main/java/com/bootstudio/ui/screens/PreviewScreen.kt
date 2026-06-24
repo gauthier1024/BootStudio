@@ -1,6 +1,7 @@
 package com.bootstudio.ui.screens
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -37,6 +38,7 @@ import utils.BootAnimDesc
 import utils.BootAnimParser
 import utils.BootAnimPart
 import java.io.File
+import java.io.FileOutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,7 +71,7 @@ fun PreviewScreen(zipPath: String, onBack: () -> Unit) {
     }
 
     LaunchedEffect(zipFile) {
-        desc = BootAnimParser.parseDesc(context, zipFile)
+        desc = BootAnimParser.parseDesc(zipFile)
         if (desc == null) {
             statusMessage = "Error: Could not parse desc.txt"
         } else {
@@ -254,7 +256,7 @@ else if (desc == null || isPreparing) {
                                 var hasAudio by remember { mutableStateOf(false) }
                                 LaunchedEffect(part) {
                                     withContext(Dispatchers.IO) {
-                                        hasAudio = BootAnimParser.getAudioForPart(zipFile, part.folder, context) != null
+                                        hasAudio = BootAnimParser.hasAudioForPart(zipFile, part.folder)
                                     }
                                 }
                                 FancyStepItem(
@@ -359,48 +361,97 @@ private suspend fun playAnimation(
     onStarted: () -> Unit
 ) {
     val frameDuration = 1000L / desc.fps
-    
-    // Pre-load all frames and audio for all parts
-    val allPartsData = withContext(Dispatchers.IO) {
-        desc.parts.map { part ->
-            val frames = BootAnimParser.getFramesForPart(zipFile, part.folder)
-            val audio = BootAnimParser.getAudioForPart(zipFile, part.folder, context)
-            frames to audio
-        }
-    }
-    
-    onStarted()
-    
-    desc.parts.forEachIndexed { index, part ->
-        onPartUpdate(index)
-        val (frames, audioFile) = allPartsData[index]
-        
-        if (frames.isNotEmpty()) {
-            val loopCount = if (part.loop == 0) 3 else part.loop 
-            repeat(loopCount) {
-                // Play audio if it exists
-                if (audioFile != null) {
-                    withContext(Dispatchers.Main) {
-                        audioPlayer.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(audioFile)))
-                        audioPlayer.prepare()
-                        audioPlayer.play()
-                    }
-                }
+    val tempDir = File(context.cacheDir, "preview_run_${System.currentTimeMillis()}")
+    tempDir.mkdirs()
 
-                for (frame in frames) {
-                    onFrameUpdate(frame)
-                    delay(frameDuration)
+    try {
+        // 1. Extract all frames and audio info in one pass
+        val folderToPartMap = desc.parts.mapIndexed { index, part -> 
+            part.folder.lowercase().trimEnd('/') to index 
+        }.toMap()
+        
+        val framesByPart = Array(desc.parts.size) { mutableListOf<File>() }
+        val audioByPart = arrayOfNulls<File>(desc.parts.size)
+
+        withContext(Dispatchers.IO) {
+            java.util.zip.ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    val nameLower = entry.name.lowercase()
+                    
+                    // Check for audio
+                    val audioFolder = folderToPartMap.keys.find { 
+                        nameLower == "$it/audio.wav" || nameLower == "$it\\audio.wav" 
+                    }
+                    if (audioFolder != null) {
+                        val partIndex = folderToPartMap[audioFolder]!!
+                        val audioFile = File(tempDir, "audio_$partIndex.wav")
+                        FileOutputStream(audioFile).use { zip.copyTo(it) }
+                        audioByPart[partIndex] = audioFile
+                    } 
+                    // Check for frames
+                    else if (!entry.isDirectory && (nameLower.endsWith(".png") || nameLower.endsWith(".jpg") || 
+                        nameLower.endsWith(".jpeg") || nameLower.endsWith(".webp"))) {
+                        
+                        val frameFolder = folderToPartMap.keys.find { 
+                            nameLower.startsWith("$it/") || nameLower.startsWith("$it\\") 
+                        }
+                        if (frameFolder != null) {
+                            val partIndex = folderToPartMap[frameFolder]!!
+                            val frameFile = File(tempDir, "part${partIndex}_${entry.name.replace("/", "_").replace("\\", "_")}")
+                            FileOutputStream(frameFile).use { zip.copyTo(it) }
+                            framesByPart[partIndex].add(frameFile)
+                        }
+                    }
+                    entry = zip.nextEntry
                 }
-                repeat(part.pause) {
-                    delay(frameDuration)
-                }
-                
-                withContext(Dispatchers.Main) {
-                    audioPlayer.stop()
+            }
+            // Sort frames for each part
+            framesByPart.forEach { it.sortBy { file -> file.name } }
+        }
+
+        onStarted()
+
+        desc.parts.forEachIndexed { index, part ->
+            onPartUpdate(index)
+            val frames = framesByPart[index]
+            val audioFile = audioByPart[index]
+
+            if (frames.isNotEmpty()) {
+                val loopCount = if (part.loop == 0) 3 else part.loop
+                repeat(loopCount) {
+                    // Play audio if it exists
+                    if (audioFile != null) {
+                        withContext(Dispatchers.Main) {
+                            audioPlayer.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(audioFile)))
+                            audioPlayer.prepare()
+                            audioPlayer.play()
+                        }
+                    }
+
+                    for (frameFile in frames) {
+                        val bitmap = withContext(Dispatchers.IO) {
+                            BitmapFactory.decodeFile(frameFile.absolutePath)
+                        }
+                        if (bitmap != null) {
+                            onFrameUpdate(bitmap)
+                        }
+                        delay(frameDuration)
+                    }
+                    repeat(part.pause) {
+                        delay(frameDuration)
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        audioPlayer.stop()
+                    }
                 }
             }
         }
-        audioFile?.delete() // Cleanup temp audio file
+    } catch (e: Exception) {
+        e.printStackTrace()
+    } finally {
+        tempDir.deleteRecursively()
+        onFinished()
     }
-    onFinished()
 }

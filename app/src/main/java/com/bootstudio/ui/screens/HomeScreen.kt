@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,10 +56,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import utils.BootAnimParser
 import utils.CommandExecutor
+import utils.DiagnosticLogger
 import utils.FFmpegDownloader
 import utils.MagiskManager
 import java.io.File
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,6 +71,7 @@ data class BootAnimation(
     val path: String,
     val isAsset: Boolean,
     val tag: String? = null,
+    val creator: String? = null,
     val previewUri: Uri? = null,
     val resolution: String? = null,
     val isNonStandard: Boolean = false,
@@ -74,7 +79,7 @@ data class BootAnimation(
 )
 
 @Composable
-fun HomeScreen(onPreview: (String) -> Unit = {}) {
+fun HomeScreen(onPreview: (String) -> Unit = {}, onSettings: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val animations = remember { mutableStateListOf<BootAnimation>() }
@@ -90,6 +95,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
     var showDeleteConfirmDialog by remember { mutableStateOf<BootAnimation?>(null) }
     var exportingAnim by remember { mutableStateOf<BootAnimation?>(null) }
     var newName by remember { mutableStateOf("") }
+    var showSettingsMenu by remember { mutableStateOf(false) }
 
     val loadAnimations: suspend () -> Unit = {
         val prefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
@@ -141,8 +147,19 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
 
         val libraryDir = File(context.filesDir, "library")
         if (libraryDir.exists()) {
+            val metaPrefs = context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
             libraryDir.listFiles()?.filter { it.extension == "zip" }?.forEach { file ->
-                initialAnims.add(BootAnimation(name = file.nameWithoutExtension, path = file.absolutePath, isAsset = false, tag = "Created"))
+                val fileName = file.name
+                var tag = metaPrefs.getString("${fileName}_tag", "Created") ?: "Created"
+                if (tag == "Downloaded") tag = "Community"
+                val creator = metaPrefs.getString("${fileName}_creator", null)
+                initialAnims.add(BootAnimation(
+                    name = file.nameWithoutExtension,
+                    path = file.absolutePath,
+                    isAsset = false,
+                    tag = tag,
+                    creator = creator
+                ))
             }
         }
         animations.clear()
@@ -157,18 +174,21 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
             initialAnims.forEachIndexed { index, anim ->
                 val procPath = if (anim.tag == "System") systemAnimToUse ?: anim.path else anim.path
                 val fileToParse = if (anim.isAsset) null else File(procPath)
-                val desc = if (anim.isAsset) BootAnimParser.parseDescFromAssets(context, anim.path) else BootAnimParser.parseDesc(context, fileToParse!!)
+                val desc = if (anim.isAsset) BootAnimParser.parseDescFromAssets(context, anim.path) else BootAnimParser.parseDesc(fileToParse!!)
 
-                // GIF Preview Generation
+                // GIF Preview Generation (v4 for OOM fix and better folder matching)
                 val previewFileName = if (anim.isAsset) {
-                    anim.path.replace("/", "_") + ".gif"
+                    anim.path.replace("/", "_") + "_v4.gif"
                 } else if (anim.tag == "System") {
                     // For system animation, use a name that identifies it as the original backup
                     val backupFileName = anim.path.trimStart('/').replace('/', '_')
-                    "original_$backupFileName.gif"
+                    "original_${backupFileName}_v4.gif"
+                } else if (anim.tag == "Community") {
+                    // For community animations, use a fixed name based on the filename
+                    "${File(anim.path).name}_v4.gif"
                 } else {
                     val file = File(procPath)
-                    "${file.nameWithoutExtension}_${file.length()}_${file.lastModified()}.gif"
+                    "${file.nameWithoutExtension}_${file.length()}_${file.lastModified()}_v4.gif"
                 }
                 val previewFile = File(previewDir, previewFileName)
 
@@ -259,6 +279,12 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                             input.copyTo(output)
                         }
                     }
+                    // Save metadata for imported animation
+                    context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("${targetFile.name}_tag", "Imported")
+                        .putString("${targetFile.name}_creator", "Unknown")
+                        .apply()
                 }
                 loadAnimations()
                 // Imported successfully
@@ -267,6 +293,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
     }
 
     LaunchedEffect(Unit) {
+        DiagnosticLogger.init(context)
         withContext(Dispatchers.IO) { CommandExecutor.initRootSession() }
         loadAnimations()
     }
@@ -277,12 +304,35 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
-            Text(
-                text = "My Library",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "My Library",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Box {
+                    IconButton(onClick = { showSettingsMenu = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
+                    DropdownMenu(
+                        expanded = showSettingsMenu,
+                        onDismissRequest = { showSettingsMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            onClick = {
+                                showSettingsMenu = false
+                                onSettings()
+                            },
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
+                        )
+                    }
+                }
+            }
 
             if (animations.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -382,7 +432,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                             showActionDialog = null
                         }) { Text("Export") }
 
-                        if (anim.tag == "Created") {
+                        if (anim.tag == "Created" || anim.tag == "Community" || anim.tag == "Imported") {
                             TextButton(onClick = {
                                 newName = anim.name
                                 showRenameDialog = anim
@@ -392,7 +442,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}) {
                     }
                 },
                 dismissButton = {
-                    if (anim.tag == "Created") {
+                    if (anim.tag == "Created" || anim.tag == "Community" || anim.tag == "Imported") {
                         TextButton(onClick = {
                             showDeleteConfirmDialog = anim
                             showActionDialog = null
@@ -624,9 +674,11 @@ fun AnimationCard(
                 Text(
                     text = buildString {
                         append(when {
-                            animation.tag == "System" -> animation.path
+                            animation.tag == "System" -> "System"
                             animation.isAsset -> "Built-in"
-                            else -> "Community User"
+                            animation.creator != null -> animation.creator
+                            animation.tag == "Created" -> "Me"
+                            else -> "Unknown"
                         })
                         animation.resolution?.let {
                             append(" • $it")
@@ -662,19 +714,8 @@ fun AnimationCard(
                 }
 
                 if (animation.tag != null) {
-                    val tagColor = when (animation.tag) {
-                        "System" -> MaterialTheme.colorScheme.primaryContainer
-                        "Built-in" -> MaterialTheme.colorScheme.secondaryContainer
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                    val onTagColor = when (animation.tag) {
-                        "System" -> MaterialTheme.colorScheme.onPrimaryContainer
-                        "Built-in" -> MaterialTheme.colorScheme.onSecondaryContainer
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-
                     Surface(
-                        color = tagColor.copy(alpha = 0.8f),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.padding(horizontal = 4.dp)
                     ) {
@@ -682,7 +723,7 @@ fun AnimationCard(
                             text = animation.tag,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
-                            color = onTagColor,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -799,51 +840,67 @@ fun BootAnimPlayer(animation: BootAnimation, onDismiss: () -> Unit) {
         val desc = if (animation.isAsset) {
             BootAnimParser.parseDescFromAssets(context, animation.path)
         } else {
-            BootAnimParser.parseDesc(context, File(animation.path))
+            BootAnimParser.parseDesc(File(animation.path))
         } ?: return@LaunchedEffect
 
         animWidth = desc.width
         animHeight = desc.height
         val frameDuration = 1000L / desc.fps
-
         isLoaded = true
-        for (part in desc.parts) {
-            val frames = if (animation.isAsset) {
-                BootAnimParser.getFramesForPartFromAssets(context, animation.path, part.folder)
-            } else {
-                BootAnimParser.getFramesForPart(File(animation.path), part.folder)
-            }
-            if (frames.isEmpty()) continue
 
-            // Extract audio for this part
-            val audioFile = if (animation.isAsset) {
-                BootAnimParser.getAudioForPartFromAssets(context, animation.path, part.folder)
+        val zipFileStream = if (animation.isAsset) {
+            context.assets.open(animation.path)
+        } else {
+            File(animation.path).inputStream()
+        }
+
+        // On-the-fly frame extraction to prevent OOM
+        withContext(Dispatchers.IO) {
+            val zipData = if (animation.isAsset) {
+                context.assets.open(animation.path).use { it.readBytes() }
             } else {
-                BootAnimParser.getAudioForPart(File(animation.path), part.folder, context)
+                File(animation.path).readBytes()
             }
 
-            val loopCount = if (part.loop == 0) 5 else part.loop
-            repeat(loopCount) {
-                // Play audio if it exists
-                if (audioFile != null) {
-                    withContext(Dispatchers.Main) {
-                        audioPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(audioFile)))
-                        audioPlayer.prepare()
-                        audioPlayer.play()
+            for (part in desc.parts) {
+                val audioFile = if (animation.isAsset) {
+                    BootAnimParser.getAudioForPartFromAssets(context, animation.path, part.folder)
+                } else {
+                    BootAnimParser.getAudioForPart(File(animation.path), part.folder, context)
+                }
+
+                val loopCount = if (part.loop == 0) 5 else part.loop
+                repeat(loopCount) {
+                    if (audioFile != null) {
+                        withContext(Dispatchers.Main) {
+                            audioPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(audioFile)))
+                            audioPlayer.prepare()
+                            audioPlayer.play()
+                        }
                     }
-                }
 
-                for (frame in frames) {
-                    currentFrame = frame
-                    delay(frameDuration)
+                    ZipInputStream(zipData.inputStream()).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            if (entry.name.startsWith("${part.folder}/") &&
+                                (entry.name.endsWith(".png", true) || entry.name.endsWith(".jpg", true) || entry.name.endsWith(".webp", true))
+                            ) {
+                                val bitmap = BitmapFactory.decodeStream(zip)
+                                if (bitmap != null) {
+                                    withContext(Dispatchers.Main) {
+                                        currentFrame = bitmap
+                                    }
+                                    delay(frameDuration)
+                                }
+                            }
+                            entry = zip.nextEntry
+                        }
+                    }
+                    delay(part.pause * frameDuration)
+                    withContext(Dispatchers.Main) { audioPlayer.stop() }
                 }
-                delay(part.pause * frameDuration)
-
-                withContext(Dispatchers.Main) {
-                    audioPlayer.stop()
-                }
+                audioFile?.delete()
             }
-            audioFile?.delete() // Cleanup temp audio file
         }
         onDismiss()
     }

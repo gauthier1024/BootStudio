@@ -1,6 +1,7 @@
 package utils
 
 import java.io.File
+import utils.DiagnosticLogger
 
 object MagiskManager {
 
@@ -14,6 +15,7 @@ object MagiskManager {
     }
 
     fun createMagiskModule(setupPath: String): String {
+        DiagnosticLogger.log("MagiskManager: Creating module structure for $setupPath")
         val moduleFilePath = getModulePathForSystemFile(setupPath)
         val targetDir = File(moduleFilePath).parent ?: MODULE_PATH
         
@@ -35,12 +37,14 @@ object MagiskManager {
     }
 
     fun disableMagiskModule(): String {
+        DiagnosticLogger.log("MagiskManager: Disabling module.")
         val moduleRoot = File(MODULE_PATH).parent ?: "/data/adb/modules/BootStudio"
         return CommandExecutor.executeWithSu("touch $moduleRoot/disable")
     }
 
     fun changeBootAnimation(zipPath: String, targetSystemPath: String): String {
         val path = targetSystemPath.trim()
+        DiagnosticLogger.log("MagiskManager: Changing boot animation to $zipPath (target: $targetSystemPath)")
         
         // Handle /data paths directly (Magisk cannot overlay /data)
         if (path.startsWith("/data/")) {
@@ -69,6 +73,7 @@ object MagiskManager {
 
     fun setDefaultAnimation(targetSystemPath: String): String {
         val path = targetSystemPath.trim()
+        DiagnosticLogger.log("MagiskManager: Reverting to default animation for $targetSystemPath")
         if (path.startsWith("/data/")) {
             // For /data paths, we should restore from backup if we have one, 
             // but for now we just remove it to revert to system default

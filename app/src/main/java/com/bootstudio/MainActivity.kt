@@ -13,6 +13,7 @@ import com.bootstudio.ui.screens.SetupScreen
 import com.bootstudio.ui.screens.CreateScreen
 import com.bootstudio.ui.screens.CommunityScreen
 import com.bootstudio.ui.screens.PreviewScreen
+import com.bootstudio.ui.screens.SettingsScreen
 import com.bootstudio.ui.screens.ErrorScreen
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.material3.*
 import rikka.shizuku.Shizuku
 import utils.FFmpegDownloader
 import utils.CommandExecutor
+import utils.DiagnosticLogger
 import utils.MagiskManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,11 +43,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DiagnosticLogger.init(this)
+        DiagnosticLogger.log("MainActivity: onCreate")
+        
         Shizuku.addRequestPermissionResultListener(permissionListener)
         FFmpegDownloader.initLoader(this)
         
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
         val initialPath = prefs.getString("boot_anim_path", null)
+        DiagnosticLogger.log("MainActivity: Initial boot_anim_path from prefs: $initialPath")
         
         enableEdgeToEdge()
         setContent {
@@ -112,12 +118,15 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     var selectedItem by remember { mutableIntStateOf(0) }
     var previewPath by remember { mutableStateOf<String?>(null) }
+    var showSettings by remember { mutableStateOf(false) }
     
     val items = listOf("Home", "Create", "Community")
     val icons = listOf(Icons.Default.Home, Icons.Default.Add, Icons.Default.Person)
 
     if (previewPath != null) {
         PreviewScreen(zipPath = previewPath!!, onBack = { previewPath = null })
+    } else if (showSettings) {
+        SettingsScreen(onBack = { showSettings = false })
     } else {
         Scaffold(
             bottomBar = {
@@ -139,7 +148,10 @@ fun MainScreen() {
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (selectedItem) {
-                        0 -> HomeScreen(onPreview = { previewPath = it })
+                        0 -> HomeScreen(
+                            onPreview = { previewPath = it },
+                            onSettings = { showSettings = true }
+                        )
                         1 -> CreateScreen()
                         2 -> CommunityScreen()
                     }
