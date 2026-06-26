@@ -23,11 +23,9 @@ object FFmpegDownloader {
     }
 
     fun initLoader(context: Context) {
-        DiagnosticLogger.log("FFmpegDownloader: Initializing loader...")
         val libDir = File(context.filesDir, "libs")
         if (libDir.exists()) {
             val libs = libDir.listFiles { _, name -> name.endsWith(".so") }
-            DiagnosticLogger.log("FFmpegDownloader: Found ${libs?.size ?: 0} libraries in ${libDir.absolutePath}")
             
             // Define the order in which libraries should be loaded to respect dependencies
             val loadOrder = listOf(
@@ -47,10 +45,9 @@ object FFmpegDownloader {
                 val libFile = File(libDir, libName)
                 if (libFile.exists()) {
                     try {
-                        DiagnosticLogger.log("FFmpegDownloader: Loading (ordered): ${libFile.absolutePath}")
                         System.load(libFile.absolutePath)
                     } catch (e: UnsatisfiedLinkError) {
-                        DiagnosticLogger.log("FFmpegDownloader: Could not load $libName yet: ${e.message}")
+                        android.util.Log.w("FFmpegDownloader", "Could not load $libName yet: ${e.message}")
                     }
                 }
             }
@@ -63,8 +60,6 @@ object FFmpegDownloader {
                     // Ignore, might be already loaded or handled later
                 }
             }
-        } else {
-            DiagnosticLogger.log("FFmpegDownloader: Lib directory does not exist.")
         }
     }
 

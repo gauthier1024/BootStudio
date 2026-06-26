@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,7 +35,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import utils.DiagnosticLogger
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -73,11 +73,9 @@ fun CommunityScreen() {
     }
 
     LaunchedEffect(Unit) {
-        DiagnosticLogger.log("CommunityScreen: Fetching animations from $jsonUrl")
         withContext(Dispatchers.IO) {
             try {
                 val response = URL(jsonUrl).readText()
-                DiagnosticLogger.log("CommunityScreen: Received JSON response")
                 // Sanitize JSON (remove trailing commas if any)
                 val sanitizedResponse = response.replace(",\\s*([}\\]])".toRegex(), "$1")
                 val jsonObject = JSONObject(sanitizedResponse)
@@ -96,13 +94,11 @@ fun CommunityScreen() {
                         )
                     )
                 }
-                DiagnosticLogger.log("CommunityScreen: Parsed ${list.size} animations")
                 withContext(Dispatchers.Main) {
                     animations = list
                     isLoading = false
                 }
             } catch (e: Exception) {
-                DiagnosticLogger.log("CommunityScreen: Error fetching animations: ${e.message}")
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     isLoading = false
@@ -190,6 +186,11 @@ fun CommunityAnimationCard(
     imageLoader: ImageLoader,
     onDownload: () -> Unit
 ) {
+    val context = LocalContext.current
+    val isDownloaded = remember(animation.title, isDownloading) {
+        File(context.filesDir, "library/${animation.title}.zip").exists()
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth().height(120.dp),
         shape = RoundedCornerShape(16.dp),
@@ -239,11 +240,14 @@ fun CommunityAnimationCard(
             if (isDownloading) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             } else {
-                IconButton(onClick = onDownload) {
+                IconButton(
+                    onClick = onDownload,
+                    enabled = !isDownloaded
+                ) {
                     Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Download",
-                        tint = MaterialTheme.colorScheme.primary
+                        imageVector = if (isDownloaded) Icons.Default.Check else Icons.Default.Add,
+                        contentDescription = if (isDownloaded) "Downloaded" else "Download",
+                        tint = if (isDownloaded) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -281,14 +285,13 @@ private suspend fun downloadAnimation(
         notificationManager.notify(notificationId, notificationBuilder.build())
 
         try {
-            DiagnosticLogger.log("CommunityScreen: Starting download for ${anim.title}")
             val libraryDir = File(context.filesDir, "library")
             if (!libraryDir.exists()) libraryDir.mkdirs()
             val targetFile = File(libraryDir, "${anim.title}.zip")
 
             val previewDir = File(context.filesDir, "previews")
             if (!previewDir.exists()) previewDir.mkdirs()
-            val targetPreviewFile = File(previewDir, "${targetFile.name}_v2.gif")
+            val targetPreviewFile = File(previewDir, "${targetFile.name}_v4.gif")
 
             // Download Zip
             val url = URL(anim.downloadUrl)
@@ -318,7 +321,6 @@ private suspend fun downloadAnimation(
                         }
                     }
                 }
-                DiagnosticLogger.log("CommunityScreen: Animation ZIP downloaded for ${anim.title}")
 
                 // Download Preview GIF
                 try {
@@ -331,10 +333,8 @@ private suspend fun downloadAnimation(
                                 input.copyTo(output)
                             }
                         }
-                        DiagnosticLogger.log("CommunityScreen: Preview GIF downloaded for ${anim.title}")
                     }
                 } catch (e: Exception) {
-                    DiagnosticLogger.log("CommunityScreen: Preview GIF download failed for ${anim.title}: ${e.message}")
                     e.printStackTrace() // Non-critical failure
                 }
 
@@ -350,13 +350,11 @@ private suspend fun downloadAnimation(
                     .setOngoing(false)
                     .setProgress(0, 0, false)
                 notificationManager.notify(notificationId, notificationBuilder.build())
-                DiagnosticLogger.log("CommunityScreen: Download success for ${anim.title}")
 
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "Successfully downloaded ${anim.title}", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                DiagnosticLogger.log("CommunityScreen: Download failed for ${anim.title}: HTTP ${connection.responseCode}")
                 notificationBuilder.setContentText("Failed to download: HTTP ${connection.responseCode}")
                     .setOngoing(false)
                     .setProgress(0, 0, false)
@@ -367,7 +365,6 @@ private suspend fun downloadAnimation(
                 }
             }
         } catch (e: Exception) {
-            DiagnosticLogger.log("CommunityScreen: Download exception for ${anim.title}: ${e.message}")
             e.printStackTrace()
             notificationBuilder.setContentText("Download failed: ${e.message}")
                 .setOngoing(false)

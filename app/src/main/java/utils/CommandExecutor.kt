@@ -21,10 +21,8 @@ object CommandExecutor {
      * À appeler au démarrage de l'application.
      */
     fun initRootSession(): Boolean {
-        DiagnosticLogger.log("CommandExecutor: Initializing Root Session...")
         return try {
             if (suProcess != null) {
-                DiagnosticLogger.log("CommandExecutor: Session already active.")
                 return true
             }
 
@@ -34,25 +32,23 @@ object CommandExecutor {
             suErrorReader = BufferedReader(InputStreamReader(suProcess!!.errorStream))
             
             // Test simple pour vérifier que le shell est actif et root
-            val result = executeWithSu("id")
+            val result = executeWithSu("id", purpose = "root check")
             val isRoot = result.contains("uid=0")
-            DiagnosticLogger.log("CommandExecutor: Root check result: $isRoot (output: $result)")
             isRoot
         } catch (e: Exception) {
-            DiagnosticLogger.log("CommandExecutor: Root initialization failed: ${e.message}")
+            DiagnosticLogger.log("Root initialization failed: ${e.message}")
             closeRootSession()
             false
         }
     }
 
     fun closeRootSession() {
-        DiagnosticLogger.log("CommandExecutor: Closing Root Session.")
         try {
             suWriter?.write("exit\n")
             suWriter?.flush()
             suProcess?.destroy()
-        } catch (e: Exception) {
-            DiagnosticLogger.log("CommandExecutor: Error closing session: ${e.message}")
+        } catch (_: Exception) {
+            // Ignored
         } finally {
             suProcess = null
             suWriter = null
@@ -61,7 +57,7 @@ object CommandExecutor {
         }
     }
 
-    fun executeWithSu(command: String, onLine: ((String) -> Unit)? = null, logResult: Boolean = true): String {
+    fun executeWithSu(command: String, purpose: String = "Internal", onLine: ((String) -> Unit)? = null): String {
         // Si la session n'est pas initialisée, on tente de le faire
         if (suProcess == null || suWriter == null) {
             if (!initRootSession()) {
@@ -70,7 +66,7 @@ object CommandExecutor {
             }
         }
 
-        DiagnosticLogger.log("CommandExecutor [SU]: $command")
+        DiagnosticLogger.log("shell", purpose, command)
         return try {
             val writer = suWriter!!
             val reader = suReader!!
@@ -92,17 +88,16 @@ object CommandExecutor {
                 }
             }
             
-            val result = output.toString().trim()
-            if (result.isNotEmpty() && logResult) DiagnosticLogger.log("CommandExecutor [SU Result]: $result")
-            result
+            output.toString().trim()
         } catch (e: Exception) {
-            DiagnosticLogger.log("CommandExecutor [SU Error]: ${e.message}")
+            DiagnosticLogger.log("shell", "$purpose Error", e.message ?: "Unknown error")
             closeRootSession() // On ferme en cas d'erreur pour réinitialiser plus tard
             "Error: ${e.message}"
         }
     }
 
     private fun executeWithSuLegacy(command: String): String {
+        DiagnosticLogger.log("shell", "Internal Legacy", command)
         return try {
             val process = ProcessBuilder("su", "-c", command).start()
             val outText = process.inputStream.bufferedReader().use { it.readText() }
@@ -110,15 +105,15 @@ object CommandExecutor {
             process.waitFor()
             if (process.exitValue() == 0) outText.trim() else errText.trim()
         } catch (e: Exception) {
+            DiagnosticLogger.log("shell", "Internal Legacy Error", e.message ?: "Unknown error")
             "su Error: ${e.message}"
         }
     }
 
-    fun executeWithShizuku(command: String, onLine: ((String) -> Unit)? = null, logResult: Boolean = true): String {
-        DiagnosticLogger.log("CommandExecutor [Shizuku]: $command")
+    fun executeWithShizuku(command: String, purpose: String = "Internal", onLine: ((String) -> Unit)? = null): String {
+        DiagnosticLogger.log("shell", purpose, command)
         return try {
             if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                DiagnosticLogger.log("CommandExecutor [Shizuku]: Not authorized")
                 return "Shizuku not authorized"
             }
             val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
@@ -134,11 +129,9 @@ object CommandExecutor {
             }
             
             process.waitFor()
-            val result = outBuilder.toString().trim()
-            if (result.isNotEmpty() && logResult) DiagnosticLogger.log("CommandExecutor [Shizuku Result]: $result")
-            result
+            outBuilder.toString().trim()
         } catch (t: Throwable) {
-            DiagnosticLogger.log("CommandExecutor [Shizuku Error]: ${t.message}")
+            DiagnosticLogger.log("shell", "$purpose Error", t.message ?: "Unknown error")
             "Shizuku Error: ${t.message}"
         }
     }

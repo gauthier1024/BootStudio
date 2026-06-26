@@ -18,7 +18,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import utils.CommandExecutor
-import utils.DiagnosticLogger
 import utils.FFmpegDownloader
 
 @Composable
@@ -76,7 +75,6 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
         statusMessage = "Scanning system directories..."
         consoleLines = emptyList()
         val tempFoundPaths = mutableListOf<String>()
-        DiagnosticLogger.log("SetupScreen: Starting system search for bootanimation.zip")
 
         scope.launch {
             val updateChannel = Channel<ConsoleLine>(capacity = 200)
@@ -107,16 +105,14 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
                 }
 
                 if (permissionMethod == "su") {
-                    CommandExecutor.executeWithSu(searchCommand, callback, logResult = false)
+                    CommandExecutor.executeWithSu(searchCommand, purpose = "find bootanimation.zip", onLine = callback)
                 } else {
-                    CommandExecutor.executeWithShizuku(searchCommand, callback, logResult = false)
+                    CommandExecutor.executeWithShizuku(searchCommand, purpose = "find bootanimation.zip", onLine = callback)
                 }
             }
 
             updateChannel.close()
             updaterJob.join()
-
-            DiagnosticLogger.log("SetupScreen: Search finished. Found ${tempFoundPaths.size} paths.")
 
             if (result.startsWith("su Error") || result.startsWith("Shizuku Error") ||
                 result.startsWith("Could not execute") || result == "Shizuku not authorized") {
@@ -215,7 +211,6 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
                         DoneStep(
                             selectedPath = selectedPath,
                             onFinishClick = {
-                                DiagnosticLogger.log("SetupScreen: Finished with path: $selectedPath")
                                 selectedPath?.let { onSetupComplete(it) }
                             }
                         )

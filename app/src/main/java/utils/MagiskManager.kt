@@ -15,7 +15,6 @@ object MagiskManager {
     }
 
     fun createMagiskModule(setupPath: String): String {
-        DiagnosticLogger.log("MagiskManager: Creating module structure for $setupPath")
         val moduleFilePath = getModulePathForSystemFile(setupPath)
         val targetDir = File(moduleFilePath).parent ?: MODULE_PATH
         
@@ -33,18 +32,16 @@ object MagiskManager {
             "rm -f $moduleRoot/disable"
         )
 
-        return CommandExecutor.executeWithSu(commands.joinToString(" && "))
+        return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "create magisk module")
     }
 
     fun disableMagiskModule(): String {
-        DiagnosticLogger.log("MagiskManager: Disabling module.")
         val moduleRoot = File(MODULE_PATH).parent ?: "/data/adb/modules/BootStudio"
-        return CommandExecutor.executeWithSu("touch $moduleRoot/disable")
+        return CommandExecutor.executeWithSu("touch $moduleRoot/disable", purpose = "disabling module")
     }
 
     fun changeBootAnimation(zipPath: String, targetSystemPath: String): String {
         val path = targetSystemPath.trim()
-        DiagnosticLogger.log("MagiskManager: Changing boot animation to $zipPath (target: $targetSystemPath)")
         
         // Handle /data paths directly (Magisk cannot overlay /data)
         if (path.startsWith("/data/")) {
@@ -55,7 +52,7 @@ object MagiskManager {
                 "chmod 644 \"$path\"",
                 "chown root:root \"$path\""
             )
-            return CommandExecutor.executeWithSu(commands.joinToString(" && "))
+            return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "changing bootanimation")
         }
 
         val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
@@ -68,19 +65,18 @@ object MagiskManager {
             "chmod 644 \"$moduleZipPath\"",
             "chown root:root \"$moduleZipPath\""
         )
-        return CommandExecutor.executeWithSu(commands.joinToString(" && "))
+        return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "changing bootanimation")
     }
 
     fun setDefaultAnimation(targetSystemPath: String): String {
         val path = targetSystemPath.trim()
-        DiagnosticLogger.log("MagiskManager: Reverting to default animation for $targetSystemPath")
         if (path.startsWith("/data/")) {
             // For /data paths, we should restore from backup if we have one, 
             // but for now we just remove it to revert to system default
-            return CommandExecutor.executeWithSu("rm -f \"$path\"")
+            return CommandExecutor.executeWithSu("rm -f \"$path\"", purpose = "reverting bootanimation")
         }
         val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
-        return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"")
+        return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"", purpose = "reverting bootanimation")
     }
 
 

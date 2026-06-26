@@ -44,14 +44,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DiagnosticLogger.init(this)
-        DiagnosticLogger.log("MainActivity: onCreate")
         
         Shizuku.addRequestPermissionResultListener(permissionListener)
         FFmpegDownloader.initLoader(this)
         
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
         val initialPath = prefs.getString("boot_anim_path", null)
-        DiagnosticLogger.log("MainActivity: Initial boot_anim_path from prefs: $initialPath")
         
         enableEdgeToEdge()
         setContent {

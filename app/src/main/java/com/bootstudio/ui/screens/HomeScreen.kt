@@ -110,24 +110,30 @@ fun HomeScreen(onPreview: (String) -> Unit = {}, onSettings: () -> Unit = {}) {
         val prepareSystemAnim: suspend (String) -> String? = { sourcePath ->
             withContext(Dispatchers.IO) {
                 val target = File(context.cacheDir, "system_backup.zip")
-                CommandExecutor.executeWithSu("cp \"$sourcePath\" \"${target.absolutePath}\" && chmod 644 \"${target.absolutePath}\"")
+                if (!target.exists()) {
+                    CommandExecutor.executeWithSu("cp \"$sourcePath\" \"${target.absolutePath}\" && chmod 644 \"${target.absolutePath}\"", purpose = "Copy system bootanim")
+                }
                 if (target.exists()) target.absolutePath else null
             }
         }
 
         var localSystemPath: String? = null
-        val moduleRoot = "/data/adb/modules/BootStudio"
-        if (systemPath != null) {
+        val cachedSystemFile = File(context.cacheDir, "system_backup.zip")
+
+        if (cachedSystemFile.exists()) {
+            localSystemPath = cachedSystemFile.absolutePath
+        } else if (systemPath != null) {
+            val moduleRoot = "/data/adb/modules/BootStudio"
             val backupFileName = systemPath.trimStart('/').replace('/', '_')
             val backupPath = "$moduleRoot/original/$backupFileName"
             val backupExists = withContext(Dispatchers.IO) {
-                CommandExecutor.executeWithSu("[ -f \"$backupPath\" ] && echo \"exists\"").contains("exists")
+                CommandExecutor.executeWithSu("[ -f \"$backupPath\" ] && echo \"exists\"", purpose = "checking backup").contains("exists")
             }
             if (backupExists) {
                 localSystemPath = prepareSystemAnim(backupPath)
             } else {
                 val detectedExists = withContext(Dispatchers.IO) {
-                    CommandExecutor.executeWithSu("[ -f \"$systemPath\" ] && echo \"exists\"").contains("exists")
+                    CommandExecutor.executeWithSu("[ -f \"$systemPath\" ] && echo \"exists\"", purpose = "checking system path").contains("exists")
                 }
                 if (detectedExists) {
                     localSystemPath = prepareSystemAnim(systemPath)

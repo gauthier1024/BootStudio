@@ -44,6 +44,7 @@ import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import utils.DiagnosticLogger
 import utils.FFmpegDownloader
 import utils.ZipUtils
 import java.io.File
@@ -170,7 +171,9 @@ fun CreateScreen() {
                                 val ss = (i * interval) / 1000.0
                                 val out = File(tempDir, "frame_$i.png")
                                 // Extract one frame at timestamp ss
-                                FFmpegKit.execute("-y -ss $ss -i ${tempSource.absolutePath} -vframes 1 ${out.absolutePath}")
+                                val command = "-y -ss $ss -i ${tempSource.absolutePath} -vframes 1 ${out.absolutePath}"
+                                //DiagnosticLogger.log("ffmpeg", "size estimation", command)
+                                FFmpegKit.execute(command)
                                 if (out.exists()) {
                                     totalSize += out.length()
                                     count++
@@ -769,9 +772,11 @@ private suspend fun generateBootAnimation(
             val videoFps = if (fps.isNotEmpty()) fps else "30"
 
             val extractCommand = "-y -i ${sourceFile.absolutePath} -vf \"${scaleFilter}fps=$videoFps\" ${part0Dir.absolutePath}/%05d.png"
+            DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
 
             val session = FFmpegKit.execute(extractCommand)
             if (!ReturnCode.isSuccess(session.returnCode)) {
+                DiagnosticLogger.log("ffmpeg", "creating bootanim Error", "RC ${session.returnCode}")
                 withContext(Dispatchers.Main) { onComplete(false) }
                 return@withContext
             }
@@ -854,9 +859,11 @@ private suspend fun generateAdvancedBootAnimation(
 
                 val scaleFilter = "scale=$targetWidth:$targetHeight"
                 val extractCommand = "-y -i ${sourceFile.absolutePath} -vf \"${scaleFilter},fps=$videoFps\" ${partDir.absolutePath}/%05d.png"
+                DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
 
                 val session = FFmpegKit.execute(extractCommand)
                 if (!ReturnCode.isSuccess(session.returnCode)) {
+                    DiagnosticLogger.log("ffmpeg", "creating bootanim Error", "RC ${session.returnCode}")
                     withContext(Dispatchers.Main) { onComplete(false) }
                     return@withContext
                 }
@@ -881,6 +888,7 @@ private suspend fun generateAdvancedBootAnimation(
                     } else {
                         // Use ffmpeg to convert to wav
                         val convertCommand = "-y -i ${audioSourceFile.absolutePath} ${audioTargetFile.absolutePath}"
+                        DiagnosticLogger.log("ffmpeg", "converting audio", convertCommand)
                         FFmpegKit.execute(convertCommand)
                     }
                 }

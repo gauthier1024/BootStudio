@@ -237,12 +237,8 @@ object BootAnimParser {
         outputGifFile: File,
         onComplete: (Boolean) -> Unit
     ) {
-        DiagnosticLogger.log("=== STARTING ROBUST GIF GENERATION ===")
-        DiagnosticLogger.log("Desc: ${desc.width}x${desc.height} @ ${desc.fps}fps, Parts: ${desc.parts.size}")
-        
         val tempDir = File(context.cacheDir, "preview_gen_${System.currentTimeMillis()}")
         if (!tempDir.exists() && !tempDir.mkdirs()) {
-            DiagnosticLogger.log("CRITICAL: Failed to create temp directory")
             onComplete(false)
             return
         }
@@ -301,8 +297,6 @@ object BootAnimParser {
                 }?.sortedBy { it.name } ?: emptyList()
 
                 if (sourceFrames.isNotEmpty()) {
-                    DiagnosticLogger.log("Part $index: Sampling ${sourceFrames.size} frames (interval $samplingInterval)")
-                    
                     val normalizedPartFrames = mutableListOf<File>()
                     // Sample frames to save time
                     for (i in sourceFrames.indices step samplingInterval) {
@@ -344,14 +338,11 @@ object BootAnimParser {
                                 val dstFile = File(sequenceDir, "frame_%06d.jpg".format(totalInSequence++))
                                 normFile.copyTo(dstFile, overwrite = true)
                             }
-                            // Simplified pause: just add a bit of time to the last frame via sampling logic
-                            // (We don't duplicate pause frames heavily for speed)
                         }
                     }
                 }
             }
 
-            DiagnosticLogger.log("Optimized Sequence: $totalInSequence frames.")
             if (totalInSequence == 0) {
                 tempDir.deleteRecursively()
                 onComplete(false)
@@ -362,23 +353,19 @@ object BootAnimParser {
             // Use the sampled rate as input
             val inputFps = (sourceFps / samplingInterval).coerceAtLeast(1)
             val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black,setpts=0.25*PTS,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=none\" \"${outputGifFile.absolutePath}\""
-            DiagnosticLogger.log("FFmpeg CMD: $command")
+            DiagnosticLogger.log("ffmpeg", "creating gif", command)
 
             FFmpegKit.executeAsync(command) { session ->
                 if (ReturnCode.isSuccess(session.returnCode)) {
-                    DiagnosticLogger.log("SUCCESS: GIF saved to ${outputGifFile.absolutePath}")
                     tempDir.deleteRecursively()
                     onComplete(true)
                 } else {
-                    DiagnosticLogger.log("FFMPEG FAILURE (RC ${session.returnCode}):")
-                    DiagnosticLogger.log(session.allLogsAsString)
+                    DiagnosticLogger.log("ffmpeg", "creating gif Error", "RC ${session.returnCode}")
                     tempDir.deleteRecursively()
                     onComplete(false)
                 }
             }
         } catch (e: Exception) {
-            DiagnosticLogger.log("JAVA EXCEPTION: ${e.message}")
-            e.stackTrace.forEach { DiagnosticLogger.log("  at $it") }
             tempDir.deleteRecursively()
             onComplete(false)
         }
