@@ -79,7 +79,11 @@ data class BootAnimation(
 )
 
 @Composable
-fun HomeScreen(onPreview: (String) -> Unit = {}, onSettings: () -> Unit = {}) {
+fun HomeScreen(
+    currentPath: String,
+    onPreview: (String) -> Unit = {},
+    onSettings: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val animations = remember { mutableStateListOf<BootAnimation>() }
@@ -95,11 +99,10 @@ fun HomeScreen(onPreview: (String) -> Unit = {}, onSettings: () -> Unit = {}) {
     var showDeleteConfirmDialog by remember { mutableStateOf<BootAnimation?>(null) }
     var exportingAnim by remember { mutableStateOf<BootAnimation?>(null) }
     var newName by remember { mutableStateOf("") }
-    var showSettingsMenu by remember { mutableStateOf(false) }
 
     val loadAnimations: suspend () -> Unit = {
         val prefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
-        val systemPath = prefs.getString("boot_anim_path", null)
+        val systemPath = currentPath
         savedSystemPath = systemPath
         appliedPath = prefs.getString("applied_anim_path", "system_default")
 
@@ -298,7 +301,7 @@ fun HomeScreen(onPreview: (String) -> Unit = {}, onSettings: () -> Unit = {}) {
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentPath) {
         DiagnosticLogger.init(context)
         withContext(Dispatchers.IO) { CommandExecutor.initRootSession() }
         loadAnimations()
@@ -320,23 +323,8 @@ fun HomeScreen(onPreview: (String) -> Unit = {}, onSettings: () -> Unit = {}) {
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                 )
-                Box {
-                    IconButton(onClick = { showSettingsMenu = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                    DropdownMenu(
-                        expanded = showSettingsMenu,
-                        onDismissRequest = { showSettingsMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Settings") },
-                            onClick = {
-                                showSettingsMenu = false
-                                onSettings()
-                            },
-                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
-                        )
-                    }
+                IconButton(onClick = onSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings")
                 }
             }
 

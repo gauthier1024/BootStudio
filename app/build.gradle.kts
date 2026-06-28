@@ -104,8 +104,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.shizuku.api)
-    implementation(libs.shizuku.provider)
     implementation(libs.ffmpeg.kit)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)

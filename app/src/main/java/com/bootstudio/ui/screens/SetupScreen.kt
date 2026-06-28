@@ -6,9 +6,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.bootstudio.ui.screens.setup.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -16,19 +20,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import rikka.shizuku.Shizuku
 import utils.CommandExecutor
 import utils.FFmpegDownloader
 
 @Composable
-fun SetupScreen(onSetupComplete: (String) -> Unit) {
+fun SetupScreen(onSetupComplete: (String, List<String>) -> Unit) {
     val context = LocalContext.current
     var currentStep by remember { mutableStateOf(SetupStep.GRANT_PERMISSION) }
     var statusMessage by remember { mutableStateOf("Welcome to BootStudio") }
     var foundPaths by remember { mutableStateOf<List<String>>(emptyList()) }
     var consoleLines by remember { mutableStateOf<List<ConsoleLine>>(emptyList()) }
     var selectedPath by remember { mutableStateOf<String?>(null) }
-    var permissionMethod by remember { mutableStateOf<String?>(null) } // "su" or "shizuku"
     var downloadProgress by remember { mutableStateOf(0f) }
     var lastErrorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -65,7 +67,7 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
                 currentStep = SetupStep.DONE
             } else {
                 statusMessage = lastErrorMessage ?: "Download failed. Please check your connection."
-                currentStep = SetupStep.GRANT_PERMISSION
+                // Stay on the same step to show error and retry button
             }
         }
     }
@@ -104,18 +106,13 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
                     updateChannel.trySend(ConsoleLine(line, isFound)).getOrNull()
                 }
 
-                if (permissionMethod == "su") {
-                    CommandExecutor.executeWithSu(searchCommand, purpose = "find bootanimation.zip", onLine = callback)
-                } else {
-                    CommandExecutor.executeWithShizuku(searchCommand, purpose = "find bootanimation.zip", onLine = callback)
-                }
+                CommandExecutor.executeWithSu(searchCommand, purpose = "setup", onLine = callback)
             }
 
             updateChannel.close()
             updaterJob.join()
 
-            if (result.startsWith("su Error") || result.startsWith("Shizuku Error") ||
-                result.startsWith("Could not execute") || result == "Shizuku not authorized") {
+            if (result.startsWith("su Error") || result.startsWith("Could not execute")) {
                 statusMessage = result
                 currentStep = SetupStep.GRANT_PERMISSION
             } else {
@@ -138,36 +135,54 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .padding(horizontal = 24.dp, vertical = 64.dp)
         ) {
-            Text(
-                text = "Setup BootStudio",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            val totalSteps = SetupStep.entries.size
+            val currentStepProgress = (currentStep.ordinal + 1).toFloat() / totalSteps
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "BootStudio Setup",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { currentStepProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    strokeCap = StrokeCap.Round
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Step ${currentStep.ordinal + 1} of $totalSteps",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
-            AnimatedContent(
-                targetState = currentStep,
-                transitionSpec = {
-                    fadeIn() + scaleIn(initialScale = 0.92f) togetherWith fadeOut() + scaleOut(targetScale = 0.92f)
-                },
-                label = "setup_step_transition"
-            ) { step ->
-                when (step) {
+            Spacer(modifier = Modifier.height(48.dp))
+
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                AnimatedContent(
+                    targetState = currentStep,
+                    transitionSpec = {
+                        (fadeIn() + slideInHorizontally { it / 2 }).togetherWith(fadeOut() + slideOutHorizontally { -it / 2 })
+                    },
+                    label = "setup_step_transition"
+                ) { step ->
+                    when (step) {
                     SetupStep.GRANT_PERMISSION -> {
                         PermissionStep(
                             statusMessage = statusMessage,
                             onSuClick = {
-                                permissionMethod = "su"
                                 startSearch()
-                            },
-                            onShizukuClick = {
-                                statusMessage = "Shizuku support is currently in development."
                             }
                         )
                     }
@@ -203,7 +218,9 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
                     SetupStep.DOWNLOAD_FFMPEG -> {
                         DownloadProgressStep(
                             downloadProgress = downloadProgress,
-                            statusMessage = statusMessage
+                            statusMessage = statusMessage,
+                            errorMessage = lastErrorMessage,
+                            onRetryClick = { startDownload() }
                         )
                     }
 
@@ -211,7 +228,7 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
                         DoneStep(
                             selectedPath = selectedPath,
                             onFinishClick = {
-                                selectedPath?.let { onSetupComplete(it) }
+                                selectedPath?.let { onSetupComplete(it, foundPaths) }
                             }
                         )
                     }
@@ -219,4 +236,5 @@ fun SetupScreen(onSetupComplete: (String) -> Unit) {
             }
         }
     }
+}
 }

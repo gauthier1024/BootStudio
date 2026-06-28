@@ -18,8 +18,8 @@ object DiagnosticLogger {
 
     fun log(type: String, purpose: String, content: String) {
         val timestamp = dateFormat.format(Date())
-        val pType = type.replaceFirstChar { it.uppercase() }.padEnd(6)
-        val pPurpose = purpose.replaceFirstChar { it.uppercase() }.padEnd(25)
+        val pType = type.replaceFirstChar { it.uppercase() }.padEnd(7)
+        val pPurpose = purpose.replaceFirstChar { it.uppercase() }.padEnd(20)
         val formattedMessage = "[$timestamp] $pType | $pPurpose | $content\n"
         
         // Print to logcat as well

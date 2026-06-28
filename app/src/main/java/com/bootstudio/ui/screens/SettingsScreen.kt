@@ -3,22 +3,31 @@ package com.bootstudio.ui.screens
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import utils.CommandExecutor
 import utils.DiagnosticLogger
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -26,10 +35,25 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    currentPath: String,
+    onPathChange: (String) -> Unit,
+    onBack: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val prefs = remember { context.getSharedPreferences("bootstudio_prefs", Context.MODE_PRIVATE) }
+    
+    var allPaths by remember { 
+        mutableStateOf(prefs.getStringSet("all_boot_anim_paths", setOf(currentPath))?.toList()?.sorted() ?: listOf(currentPath)) 
+    }
+    
+    var isScanning by remember { mutableStateOf(false) }
     var showClearLogDialog by remember { mutableStateOf(false) }
+
+    BackHandler {
+        onBack()
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
@@ -80,7 +104,100 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding)
                 .padding(16.dp)
+                .verticalScroll(rememberScrollState())
         ) {
+            // Path Selection Section
+            Text(
+                text = "Boot Animation Configuration",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Change bootanimation path:",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    allPaths.forEach { path ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPathChange(path) }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = (path == currentPath),
+                                onClick = { onPathChange(path) }
+                            )
+                            Text(
+                                text = path,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(start = 8.dp),
+                                maxLines = 1
+                            )
+                            if (path == currentPath) {
+                                Spacer(modifier = Modifier.weight(1f))
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            isScanning = true
+                            scope.launch {
+                                val searchCommand = "find / -path /data/media -prune -o -path /storage -prune -o -path /mnt -prune -o -path /proc -prune -o -path /data/adb/modules/BootStudio -prune -o -type d -print -o -name \"bootanimation.zip\" -print 2>/dev/null"
+                                val newFoundPaths = mutableListOf<String>()
+                                
+                                withContext(Dispatchers.IO) {
+                                    CommandExecutor.executeWithSu(searchCommand, purpose = "settings_scan") { line ->
+                                        if (line.endsWith("bootanimation.zip")) {
+                                            newFoundPaths.add(line)
+                                        }
+                                    }
+                                }
+                                
+                                if (newFoundPaths.isNotEmpty()) {
+                                    allPaths = newFoundPaths.sorted()
+                                    prefs.edit().putStringSet("all_boot_anim_paths", newFoundPaths.toSet()).apply()
+                                    Toast.makeText(context, "Found ${newFoundPaths.size} paths", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "No bootanimation.zip found", Toast.LENGTH_SHORT).show()
+                                }
+                                isScanning = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isScanning
+                    ) {
+                        if (isScanning) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Scan for bootanimations")
+                        }
+                    }
+                }
+            }
+
             Text(
                 text = "Diagnostic Tools",
                 style = MaterialTheme.typography.titleMedium,

@@ -1,8 +1,6 @@
 package utils
 
-import android.content.pm.PackageManager
 import android.util.Log
-import rikka.shizuku.Shizuku
 import utils.DiagnosticLogger
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -32,11 +30,27 @@ object CommandExecutor {
             suErrorReader = BufferedReader(InputStreamReader(suProcess!!.errorStream))
             
             // Test simple pour vérifier que le shell est actif et root
-            val result = executeWithSu("id", purpose = "root check")
-            val isRoot = result.contains("uid=0")
+            // Use a direct write to avoid recursion with executeWithSu
+            val writer = suWriter!!
+            val reader = suReader!!
+            val delimiter = "ROOT_CHECK_DONE"
+            
+            writer.write("id\n")
+            writer.write("echo $delimiter\n")
+            writer.flush()
+
+            val output = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (line == delimiter) break
+                output.append(line).append("\n")
+            }
+            
+            val isRoot = output.toString().contains("uid=0")
+            if (!isRoot) closeRootSession()
             isRoot
         } catch (e: Exception) {
-            DiagnosticLogger.log("Root initialization failed: ${e.message}")
+            DiagnosticLogger.log("shell", "Root Check Error", e.message ?: "Unknown error")
             closeRootSession()
             false
         }
@@ -107,32 +121,6 @@ object CommandExecutor {
         } catch (e: Exception) {
             DiagnosticLogger.log("shell", "Internal Legacy Error", e.message ?: "Unknown error")
             "su Error: ${e.message}"
-        }
-    }
-
-    fun executeWithShizuku(command: String, purpose: String = "Internal", onLine: ((String) -> Unit)? = null): String {
-        DiagnosticLogger.log("shell", purpose, command)
-        return try {
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                return "Shizuku not authorized"
-            }
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
-            
-            val outBuilder = StringBuilder()
-            val outReader = BufferedReader(InputStreamReader(process.inputStream))
-            var line: String?
-            while (outReader.readLine().also { line = it } != null) {
-                line?.let {
-                    outBuilder.append(it).append("\n")
-                    onLine?.invoke(it)
-                }
-            }
-            
-            process.waitFor()
-            outBuilder.toString().trim()
-        } catch (t: Throwable) {
-            DiagnosticLogger.log("shell", "$purpose Error", t.message ?: "Unknown error")
-            "Shizuku Error: ${t.message}"
         }
     }
 }

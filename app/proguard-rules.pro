@@ -28,10 +28,6 @@
 -keep class com.arthenica.ffmpegkit.** { *; }
 -dontwarn com.arthenica.ffmpegkit.**
 
-# Shizuku
--keep class rikka.shizuku.** { *; }
--dontwarn rikka.shizuku.**
-
 # Compose
 -keep class androidx.compose.** { *; }
 -dontwarn androidx.compose.**

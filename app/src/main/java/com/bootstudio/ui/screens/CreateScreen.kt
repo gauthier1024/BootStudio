@@ -49,7 +49,11 @@ import utils.FFmpegDownloader
 import utils.ZipUtils
 import java.io.File
 
-private const val MAX_ZIP_SIZE_MB = 400
+private const val MAX_ZIP_SIZE_MB = 600
+private const val COMPLETE_PART_ERROR_MS = 20000L
+private const val COMPLETE_PART_WARNING_MS = 10000L
+private const val MAX_FPS_ERROR = 65
+private const val MAX_FPS_WARNING = 35
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,8 +95,8 @@ fun CreateScreen() {
     var ffmpegStatusMessage by remember { mutableStateOf("") }
 
     // Validation Dialogs
-    var validationError by remember { mutableStateOf<String?>(null) }
-    var validationWarning by remember { mutableStateOf<String?>(null) }
+    var validationErrors by remember { mutableStateOf<List<String>>(emptyList()) }
+    var validationWarnings by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val startAdvancedGeneration = {
         scope.launch {
@@ -126,63 +130,72 @@ fun CreateScreen() {
                     return@launch
                 }
                 
+                val isGif = context.contentResolver.getType(it)?.contains("gif") == true
                 var selectedDuration = 0L
+                var currentSourceWidth = 0
+                var currentSourceHeight = 0
+                var currentSourceFps = 30.0
+
                 try {
-                    val retriever = MediaMetadataRetriever()
-                    retriever.setDataSource(context, it)
-                    selectedDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    if (isGif) {
+                        // For GIFs, we use FFmpeg to get metadata since MMR often fails
+                        val infoDir = File(context.cacheDir, "info_${System.currentTimeMillis()}")
+                        infoDir.mkdirs()
+                        val tempGif = File(infoDir, "source.gif")
+                        context.contentResolver.openInputStream(it)?.use { input ->
+                            tempGif.outputStream().use { output -> input.copyTo(output) }
+                        }
 
-                    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-                    val vWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
-                    val vHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                        val session = FFmpegKit.execute("-i ${tempGif.absolutePath}")
+                        val output = session.allLogsAsString
+                        
+                        // Extract resolution (e.g., 500x300)
+                        val resRegex = Regex(" (\\d{2,5})x(\\d{2,5})")
+                        val resMatch = resRegex.find(output)
+                        if (resMatch != null) {
+                            currentSourceWidth = resMatch.groupValues[1].toInt()
+                            currentSourceHeight = resMatch.groupValues[2].toInt()
+                        }
 
-                    val currentSourceWidth = if (rotation == 90 || rotation == 270) vHeight else vWidth
-                    val currentSourceHeight = if (rotation == 90 || rotation == 270) vWidth else vHeight
+                        // Extract FPS (e.g., 15 fps)
+                        val fpsRegex = Regex(" (\\d{1,3}(\\.\\d+)?) fps")
+                        val fpsMatch = fpsRegex.find(output)
+                        currentSourceFps = fpsMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 30.0
 
-                    var currentSourceFps = 30.0
-                    val vFpsStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
-                    if (vFpsStr != null) {
-                        currentSourceFps = vFpsStr.toDoubleOrNull() ?: 30.0
+                        // Duration is harder for GIFs via ffmpeg info, default to 1000ms if not found
+                        // or better, extract total frames if possible. For now, estimate duration
+                        // from common GIF patterns or just use a default for estimation.
+                        selectedDuration = 2000L // Default estimate for GIFs
+
+                        infoDir.deleteRecursively()
                     } else {
-                        val frameCount = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toDoubleOrNull()
-                        if (frameCount != null && selectedDuration > 0) {
-                            currentSourceFps = frameCount / (selectedDuration / 1000.0)
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(context, it)
+                            selectedDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+
+                            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                            val vWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                            val vHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+
+                            currentSourceWidth = if (rotation == 90 || rotation == 270) vHeight else vWidth
+                            currentSourceHeight = if (rotation == 90 || rotation == 270) vWidth else vHeight
+
+                            val vFpsStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                            if (vFpsStr != null) {
+                                currentSourceFps = vFpsStr.toDoubleOrNull() ?: 30.0
+                            } else {
+                                val frameCount = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toDoubleOrNull()
+                                if (frameCount != null && selectedDuration > 0) {
+                                    currentSourceFps = frameCount / (selectedDuration / 1000.0)
+                                }
+                            }
+                        } finally {
+                            retriever.release()
                         }
                     }
 
                     val currentSourceSize = context.contentResolver.openAssetFileDescriptor(it, "r")?.use { fd -> fd.length } ?: 0L
-
-                    // Estimation: Extract 5 frames to get real average size
-                    var estimatedAvgSize = 0L
-                    withContext(Dispatchers.IO) {
-                        val tempDir = File(context.cacheDir, "estimation_${System.currentTimeMillis()}")
-                        tempDir.mkdirs()
-                        val tempSource = File(tempDir, "source")
-                        context.contentResolver.openInputStream(it)?.use { input ->
-                            tempSource.outputStream().use { output -> input.copyTo(output) }
-                        }
-
-                        if (FFmpegDownloader.isInstalled(context)) {
-                            FFmpegDownloader.initLoader(context)
-                            val interval = selectedDuration / 5
-                            var totalSize = 0L
-                            var count = 0
-                            for (i in 0 until 5) {
-                                val ss = (i * interval) / 1000.0
-                                val out = File(tempDir, "frame_$i.png")
-                                // Extract one frame at timestamp ss
-                                val command = "-y -ss $ss -i ${tempSource.absolutePath} -vframes 1 ${out.absolutePath}"
-                                //DiagnosticLogger.log("ffmpeg", "size estimation", command)
-                                FFmpegKit.execute(command)
-                                if (out.exists()) {
-                                    totalSize += out.length()
-                                    count++
-                                }
-                            }
-                            if (count > 0) estimatedAvgSize = totalSize / count
-                        }
-                        tempDir.deleteRecursively()
-                    }
 
                     if (isAdvanced && activePartIndex >= 0) {
                         parts = parts.toMutableList().also { list ->
@@ -193,7 +206,7 @@ fun CreateScreen() {
                                 sourceHeight = currentSourceHeight,
                                 sourceFps = currentSourceFps,
                                 sourceSize = currentSourceSize,
-                                avgFrameSize = estimatedAvgSize
+                                avgFrameSize = 0L
                             )
                         }
                     } else {
@@ -203,20 +216,85 @@ fun CreateScreen() {
                         sourceFps = currentSourceFps
                         sourceSize = currentSourceSize
                         sourceDuration = selectedDuration
-                        avgFrameSizeAtSource = estimatedAvgSize
+                        avgFrameSizeAtSource = 0L
                     }
 
                     if (!isAdvanced) fileName = it.path?.split("/")?.last() ?: "Selected File"
 
-                    // Auto-detect metadata (only if not advanced OR if it's the first sequence)
                     if (!isAdvanced || activePartIndex == 0) {
-                        if (vWidth > 0 && vHeight > 0) {
+                        if (currentSourceWidth > 0 && currentSourceHeight > 0) {
                             width = currentSourceWidth.toString()
                             height = currentSourceHeight.toString()
                         }
                         fps = currentSourceFps.toInt().toString()
                     }
-                    retriever.release()
+
+                    // 4. PERFORM ESTIMATION IN BACKGROUND
+                    withContext(Dispatchers.IO) {
+                        try {
+                            var finalAvgSize = 0L
+                            
+                            if (isGif) {
+                                // For GIFs, we can estimate frame size by extracting just the first frame
+                                // Using a faster extraction method
+                                val estDir = File(context.cacheDir, "est_gif_${System.currentTimeMillis()}")
+                                estDir.mkdirs()
+                                val tempGif = File(estDir, "source.gif")
+                                context.contentResolver.openInputStream(it)?.use { input ->
+                                    tempGif.outputStream().use { output -> input.copyTo(output) }
+                                }
+                                val outFrame = File(estDir, "frame.png")
+                                // Use -vframes 1 for instant extraction of the first frame
+                                FFmpegKit.execute("-y -i ${tempGif.absolutePath} -vframes 1 ${outFrame.absolutePath}")
+                                if (outFrame.exists()) {
+                                    finalAvgSize = (outFrame.length() * 1.15).toLong()
+                                }
+                                estDir.deleteRecursively()
+                            } else {
+                                val retriever = MediaMetadataRetriever()
+                                retriever.setDataSource(context, it)
+                                
+                                // Sample only 2 frames (start and middle) to speed up significantly
+                                var totalSize = 0L
+                                var count = 0
+                                val times = listOf(0.1, 0.5) 
+                                
+                                for (multiplier in times) {
+                                    // Use OPTION_PREVIOUS_SYNC for much faster seeking
+                                    val frame = retriever.getFrameAtTime(
+                                        (selectedDuration * multiplier).toLong() * 1000,
+                                        MediaMetadataRetriever.OPTION_PREVIOUS_SYNC
+                                    )
+                                    frame?.let { bmp ->
+                                        val tempFile = File(context.cacheDir, "size_est_${count}.png")
+                                        tempFile.outputStream().use { out ->
+                                            // 100% quality is still needed for accurate size, but fewer frames = faster
+                                            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                                        }
+                                        totalSize += tempFile.length()
+                                        count++
+                                        tempFile.delete()
+                                    }
+                                }
+                                if (count > 0) finalAvgSize = (totalSize / count * 1.15).toLong()
+                                retriever.release()
+                            }
+                            
+                            withContext(Dispatchers.Main) {
+                                if (isAdvanced && activePartIndex >= 0) {
+                                    parts = parts.toMutableList().also { list ->
+                                        if (activePartIndex < list.size && list[activePartIndex].uri == it) {
+                                            list[activePartIndex] = list[activePartIndex].copy(avgFrameSize = finalAvgSize)
+                                        }
+                                    }
+                                } else if (selectedUri == it) {
+                                    avgFrameSizeAtSource = finalAvgSize
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -500,6 +578,13 @@ fun CreateScreen() {
                 color = if (estimatedSizeMB > MAX_ZIP_SIZE_MB) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
+        } else if (selectedUri != null || (isAdvanced && parts.any { it.uri != null })) {
+            Text(
+                text = "Calculating estimated size...",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
 
         // 3. Generate Button
@@ -507,42 +592,57 @@ fun CreateScreen() {
             onClick = {
                 if (!FFmpegDownloader.isInstalled(context)) {
                     showFFmpegDialog = true
-                } else if (estimatedSizeMB > MAX_ZIP_SIZE_MB) {
-                    validationError = "The estimated ZIP size (${String.format(Locale.getDefault(), "%.2f", estimatedSizeMB)} MB) exceeds the $MAX_ZIP_SIZE_MB MB limit. At high resolutions, boot animations become massive very quickly. Try lowering the resolution or FPS."
+                    return@Button
+                }
+
+                val currentErrors = mutableListOf<String>()
+                val currentWarnings = mutableListOf<String>()
+
+                // 1. Check ZIP Size
+                if (estimatedSizeMB > MAX_ZIP_SIZE_MB) {
+                    currentWarnings.add("The estimated ZIP size (${String.format(Locale.getDefault(), "%.2f", estimatedSizeMB)} MB) exceeds the recommended $MAX_ZIP_SIZE_MB MB limit. Large boot animations can cause long boot times or stability issues on some devices.")
+                }
+
+                // 2. Check FPS
+                val currentFpsNum = fps.toIntOrNull() ?: 0
+                if (currentFpsNum > MAX_FPS_ERROR) {
+                    currentErrors.add("The FPS ($fps) is too high. Most devices cannot render boot animations above $MAX_FPS_ERROR FPS properly. Please lower it.")
+                } else if (currentFpsNum > MAX_FPS_WARNING) {
+                    currentWarnings.add("The FPS ($currentFpsNum) is quite high (above $MAX_FPS_WARNING). This might cause lag during boot or skipped frames on some devices.")
+                }
+
+                // 3. Mode Specific Checks
+                if (isAdvanced) {
+                    for (part in parts) {
+                        if (part.uri == null) continue
+
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(context, part.uri)
+                            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+
+                            if (part.type == "c") {
+                                if (durationMs > COMPLETE_PART_ERROR_MS) {
+                                    currentErrors.add("Part \"${part.folder}\" uses 'complete' type with a video longer than ${COMPLETE_PART_ERROR_MS / 1000} seconds. This will block the boot process until the video finishes.")
+                                } else if (durationMs > COMPLETE_PART_WARNING_MS) {
+                                    currentWarnings.add("Part \"${part.folder}\" uses 'complete' type with a video longer than ${COMPLETE_PART_WARNING_MS / 1000} seconds. This might significantly slow down your boot time.")
+                                }
+                            }
+                        } finally {
+                            retriever.release()
+                        }
+                    }
+                } else {
+                    // Standard Mode FPS Warning (already handled above generally, but ensuring logic flow)
+                }
+
+                if (currentErrors.isNotEmpty()) {
+                    validationErrors = currentErrors
+                } else if (currentWarnings.isNotEmpty()) {
+                    validationWarnings = currentWarnings
                 } else {
                     if (isAdvanced) {
-                        // Validation for Advanced Mode
-                        var errorMsg: String? = null
-                        var warningMsg: String? = null
-
-                        for (part in parts) {
-                            if (part.uri == null) continue
-
-                            val retriever = MediaMetadataRetriever()
-                            try {
-                                retriever.setDataSource(context, part.uri)
-                                val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-
-                                if (part.type == "c") {
-                                    if (durationMs > 10000) {
-                                        errorMsg = "Part \"${part.folder}\" uses 'complete' type with a video longer than 10 seconds. This will block the boot process until the video finishes."
-                                        break
-                                    } else if (durationMs > 5000) {
-                                        warningMsg = "Part \"${part.folder}\" uses 'complete' type with a video longer than 5 seconds. This might significantly slow down your boot time. Do you want to proceed?"
-                                    }
-                                }
-                            } finally {
-                                retriever.release()
-                            }
-                        }
-
-                        if (errorMsg != null) {
-                            validationError = errorMsg
-                        } else if (warningMsg != null) {
-                            validationWarning = warningMsg
-                        } else {
-                            startAdvancedGeneration()
-                        }
+                        startAdvancedGeneration()
                     } else {
                         scope.launch {
                             generateBootAnimation(
@@ -693,36 +793,74 @@ fun CreateScreen() {
         )
     }
 
-    if (validationError != null) {
+    if (validationErrors.isNotEmpty()) {
         AlertDialog(
-            onDismissRequest = { validationError = null },
-            title = { Text("Critical Warning") },
+            onDismissRequest = { validationErrors = emptyList() },
+            title = { Text("Critical Warnings") },
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            text = { Text(validationError!!) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    validationErrors.forEach { error ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("•", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                            Text(error)
+                        }
+                    }
+                }
+            },
             confirmButton = {
-                Button(onClick = { validationError = null }) {
+                Button(onClick = { validationErrors = emptyList() }) {
                     Text("I'll fix it")
                 }
             }
         )
     }
 
-    if (validationWarning != null) {
+    if (validationWarnings.isNotEmpty()) {
         AlertDialog(
-            onDismissRequest = { validationWarning = null },
-            title = { Text("Slow Boot Warning") },
+            onDismissRequest = { validationWarnings = emptyList() },
+            title = { Text("Performance Warnings") },
             icon = { Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-            text = { Text(validationWarning!!) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    validationWarnings.forEach { warning ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("•", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text(warning)
+                        }
+                    }
+                }
+            },
             confirmButton = {
                 Button(onClick = {
-                    validationWarning = null
-                    startAdvancedGeneration()
+                    validationWarnings = emptyList()
+                    if (isAdvanced) {
+                        startAdvancedGeneration()
+                    } else {
+                        // Handle standard mode generation from warning
+                         scope.launch {
+                            generateBootAnimation(
+                                context, selectedUri, fileName, fps, width, height,
+                                onProgress = { status: String, progress: Float ->
+                                    generationStatus = status
+                                    generationProgress = progress
+                                },
+                                onStart = { isGenerating = true },
+                                onComplete = { success: Boolean ->
+                                    isGenerating = false
+                                    if (!success) {
+                                        Toast.makeText(context, "Failed to create animation.", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }) {
                     Text("Proceed Anyway")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { validationWarning = null }) {
+                TextButton(onClick = { validationWarnings = emptyList() }) {
                     Text("Go Back")
                 }
             }
