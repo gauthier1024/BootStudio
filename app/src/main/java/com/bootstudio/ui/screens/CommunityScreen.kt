@@ -3,6 +3,7 @@ package com.bootstudio.ui.screens
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.widget.Toast
@@ -26,22 +27,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.NotificationCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
+import com.bootstudio.service.DownloadService
+import com.bootstudio.ui.components.VideoPreview
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import com.bootstudio.ui.components.VideoPreview
 import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
 import java.net.URL
 
 data class CommunityAnimation(
@@ -54,11 +47,12 @@ data class CommunityAnimation(
 @Composable
 fun CommunityScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var animations by remember { mutableStateOf<List<CommunityAnimation>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var showInfoDialog by remember { mutableStateOf(false) }
-    val downloadingItems = remember { mutableStateListOf<String>() }
+    
+    // Collect downloading items from the service
+    val downloadingItems by DownloadService.downloadingItems.collectAsState()
 
     // Use raw.githubusercontent.com for direct access to files
     val jsonUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/main/BootAnimations/bootanimations.json"
@@ -68,7 +62,6 @@ fun CommunityScreen() {
         withContext(Dispatchers.IO) {
             try {
                 val response = URL(jsonUrl).readText()
-                // Sanitize JSON (remove trailing commas if any)
                 val sanitizedResponse = response.replace(",\\s*([}\\]])".toRegex(), "$1")
                 val jsonObject = JSONObject(sanitizedResponse)
                 val jsonArray = jsonObject.getJSONArray("bootanimations")
@@ -147,19 +140,26 @@ fun CommunityScreen() {
                 }
             } else {
                 LazyColumn(
+                    contentPadding = PaddingValues(bottom = 100.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(animations) { anim ->
                         CommunityAnimationCard(
                             animation = anim,
-                            isDownloading = downloadingItems.contains(anim.title),
+                            downloadProgress = downloadingItems[anim.title],
                             onDownload = {
-                                downloadingItems.add(anim.title)
-                                scope.launch {
-                                    downloadAnimation(context, anim) {
-                                        downloadingItems.remove(anim.title)
-                                    }
+                                val intent = Intent(context, DownloadService::class.java).apply {
+                                    action = DownloadService.ACTION_START_DOWNLOAD
+                                    putExtra(DownloadService.EXTRA_ANIM_TITLE, anim.title)
+                                    putExtra(DownloadService.EXTRA_ANIM_CREATOR, anim.creator)
+                                    putExtra(DownloadService.EXTRA_DOWNLOAD_URL, anim.downloadUrl)
+                                    putExtra(DownloadService.EXTRA_PREVIEW_URL, anim.previewUrl)
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    context.startForegroundService(intent)
+                                } else {
+                                    context.startService(intent)
                                 }
                             }
                         )
@@ -170,14 +170,14 @@ fun CommunityScreen() {
     }
 }
 
-
 @Composable
 fun CommunityAnimationCard(
     animation: CommunityAnimation,
-    isDownloading: Boolean,
+    downloadProgress: Int?,
     onDownload: () -> Unit
 ) {
     val context = LocalContext.current
+    val isDownloading = downloadProgress != null
     val isDownloaded = remember(animation.title, isDownloading) {
         File(context.filesDir, "library/${animation.title}.zip").exists()
     }
@@ -217,10 +217,21 @@ fun CommunityAnimationCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                
+                if (isDownloading) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = (downloadProgress ?: 0) / 100f,
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                }
             }
 
             if (isDownloading) {
-                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                Box(modifier = Modifier.padding(8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
             } else {
                 IconButton(
                     onClick = onDownload,
@@ -233,131 +244,6 @@ fun CommunityAnimationCard(
                     )
                 }
             }
-        }
-    }
-}
-
-private suspend fun downloadAnimation(
-    context: Context,
-    anim: CommunityAnimation,
-    onComplete: () -> Unit
-) {
-    withContext(Dispatchers.IO) {
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "community_download_channel"
-        val notificationId = anim.title.hashCode()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Downloads",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            notificationManager.createNotificationChannel(channel)
-        }
-
-        val notificationBuilder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Downloading ${anim.title}")
-            .setContentText("Connecting...")
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .setProgress(100, 0, true)
-
-        notificationManager.notify(notificationId, notificationBuilder.build())
-
-        try {
-            val libraryDir = File(context.filesDir, "library")
-            if (!libraryDir.exists()) libraryDir.mkdirs()
-            val targetFile = File(libraryDir, "${anim.title}.zip")
-
-            val previewDir = File(context.filesDir, "previews")
-            if (!previewDir.exists()) previewDir.mkdirs()
-            val targetPreviewFile = File(previewDir, "${targetFile.name}.mp4")
-
-            // Download Zip
-            val url = URL(anim.downloadUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connect()
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val fileLength = connection.contentLength
-                connection.inputStream.use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        val buffer = ByteArray(4096)
-                        var total: Long = 0
-                        var count: Int
-                        var lastProgressUpdate = 0
-                        while (input.read(buffer).also { count = it } != -1) {
-                            total += count
-                            output.write(buffer, 0, count)
-                            if (fileLength > 0) {
-                                val progress = ((total * 100) / fileLength).toInt()
-                                if (progress > lastProgressUpdate) {
-                                    lastProgressUpdate = progress
-                                    notificationBuilder.setProgress(100, progress, false)
-                                        .setContentText("$progress%")
-                                    notificationManager.notify(notificationId, notificationBuilder.build())
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Download Preview MP4
-                try {
-                    val previewUrl = URL(anim.previewUrl)
-                    val previewConnection = previewUrl.openConnection() as HttpURLConnection
-                    previewConnection.connect()
-                    if (previewConnection.responseCode == HttpURLConnection.HTTP_OK) {
-                        previewConnection.inputStream.use { input ->
-                            FileOutputStream(targetPreviewFile).use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace() // Non-critical failure
-                }
-
-                // Save metadata
-                context.getSharedPreferences("anim_metadata", Context.MODE_PRIVATE)
-                    .edit()
-                    .putString("${targetFile.name}_tag", "Community")
-                    .putString("${targetFile.name}_creator", anim.creator)
-                    .apply()
-
-                notificationBuilder.setSmallIcon(android.R.drawable.stat_sys_download_done)
-                    .setContentText("Download complete")
-                    .setOngoing(false)
-                    .setProgress(0, 0, false)
-                notificationManager.notify(notificationId, notificationBuilder.build())
-
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Successfully downloaded ${anim.title}", Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                notificationBuilder.setContentText("Failed to download: HTTP ${connection.responseCode}")
-                    .setOngoing(false)
-                    .setProgress(0, 0, false)
-                notificationManager.notify(notificationId, notificationBuilder.build())
-
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Failed to download: HTTP ${connection.responseCode}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            notificationBuilder.setContentText("Download failed: ${e.message}")
-                .setOngoing(false)
-                .setProgress(0, 0, false)
-            notificationManager.notify(notificationId, notificationBuilder.build())
-
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        } finally {
-            withContext(Dispatchers.Main) { onComplete() }
         }
     }
 }

@@ -6,11 +6,11 @@ BootStudio is an Android application for managing and customizing boot animation
 <summary><strong>📷 Click to see screenshots</strong></summary>
 
 <p align="center">
-  <img src="github_assets/Screenshot_BootStudio_0.png" width="18%">
-  <img src="github_assets/Screenshot_BootStudio_1.png" width="18%">
-  <img src="github_assets/Screenshot_BootStudio_2.png" width="18%">
-  <img src="github_assets/Screenshot_BootStudio_3.png" width="18%">
-  <img src="github_assets/Screenshot_BootStudio_4.png" width="18%">
+  <img src="github_assets/Screenshot_BootStudio_0.png" width="22%">
+  <img src="github_assets/Screenshot_BootStudio_1.png" width="22%">
+  <img src="github_assets/Screenshot_BootStudio_2.png" width="22%">
+  <img src="github_assets/Screenshot_BootStudio_3.png" width="22%">
+
 </p>
 
 </details>
@@ -33,8 +33,8 @@ To contribute an animation to the community store, follow these steps:
 3. Add a new JSON object with your `title` and `creator` name.
 4. Create a folder in the `BootAnimations/` directory with the exact same name as your `title`.
 5. Place your `bootanimation.zip` inside that folder.
-6. Generate a `preview.gif` and place it in the same folder.
-    - You can use the `tools/extract_gif.sh` script to create the preview from your zip file.
+6. Generate a `preview.mp4` and place it in the same folder.
+    - You can use the `tools/preview.py` script to create the preview from your zip file.
 7. Submit a Pull Request with your changes.
 
 ## Requirements

@@ -167,7 +167,7 @@ fun SettingsScreen(
                                 val newFoundPaths = mutableListOf<String>()
                                 
                                 withContext(Dispatchers.IO) {
-                                    CommandExecutor.executeWithSu(searchCommand, purpose = "settings_scan") { line ->
+                                    CommandExecutor.executeWithSu(searchCommand, purpose = "scan for bootanim") { line ->
                                         if (line.endsWith("bootanimation.zip")) {
                                             newFoundPaths.add(line)
                                         }
@@ -222,7 +222,7 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = null)
                     Column {
-                        Text(text = "Export Diagnostic Log", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                        Text(text = "Export Logs", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                         Text(text = "Save log.txt to Downloads for debugging", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -244,7 +244,7 @@ fun SettingsScreen(
                     Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                     Column {
                         Text(
-                            text = "Clear Diagnostic Log",
+                            text = "Clear Logs",
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onErrorContainer
@@ -262,7 +262,7 @@ fun SettingsScreen(
                 AlertDialog(
                     onDismissRequest = { showClearLogDialog = false },
                     title = { Text("Clear Logs?") },
-                    text = { Text("This will permanently delete the current diagnostic log file. This action cannot be undone.") },
+                    text = { Text("This will permanently delete the current log file.") },
                     confirmButton = {
                         TextButton(
                             onClick = {

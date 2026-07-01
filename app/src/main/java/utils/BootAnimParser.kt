@@ -249,127 +249,76 @@ object BootAnimParser {
         }
 
         try {
-            // 1. Extract ALL frames to 'raw' folder
+            // OPTIMIZATION: Only extract the FIRST part to generate a quick preview
+            val firstPart = desc.parts.firstOrNull() ?: return onComplete(false)
+            val searchFolder = firstPart.folder.replace("\\", "/").trim('/').lowercase().removePrefix("./")
+
+            val sequenceDir = File(tempDir, "sequence").apply { mkdirs() }
+            var frameCount = 0
+            val maxFrames = 60 // ~2-4 seconds at 15-30fps is plenty for a thumbnail
+
+            // Sample every Nth frame to speed up extraction and encoding
+            val sourceFps = desc.fps.coerceAtLeast(1)
+            val samplingInterval = (sourceFps / 15).coerceAtLeast(1)
+
             ZipInputStream(inputStream.buffered()).use { zip ->
                 var entry = zip.nextEntry
+                var zipFrameIndex = 0
                 while (entry != null) {
                     val name = entry.name.replace("\\", "/")
                     if (!entry.isDirectory && (name.endsWith(".png", true) || name.endsWith(".jpg", true) ||
                                 name.endsWith(".jpeg", true) || name.endsWith(".webp", true))) {
 
-                        val folderPath = name.substringBeforeLast("/", "").lowercase()
-                        val frameFolder = File(tempDir, "raw/$folderPath")
-                        if (!frameFolder.exists()) frameFolder.mkdirs()
+                        val entryFolder = name.substringBeforeLast("/", "").lowercase()
+                        if (entryFolder == searchFolder || entryFolder.endsWith("/$searchFolder")) {
 
-                        val frameFile = File(frameFolder, name.substringAfterLast("/"))
-                        FileOutputStream(frameFile).use { out -> zip.copyTo(out) }
+                            if (zipFrameIndex % samplingInterval == 0) {
+                                val frameFile = File(sequenceDir, "frame_%06d.jpg".format(frameCount++))
+
+                                // Direct decode and scale to save memory and time
+                                val options = BitmapFactory.Options().apply {
+                                    inJustDecodeBounds = true
+                                }
+                                val bytes = zip.readBytes()
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+
+                                options.inSampleSize = calculateInSampleSize(options, 256, 256)
+                                options.inJustDecodeBounds = false
+                                options.inPreferredConfig = Bitmap.Config.RGB_565
+
+                                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                                if (bitmap != null) {
+                                    FileOutputStream(frameFile).use { out ->
+                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out) // Lower quality for even faster I/O
+                                    }
+                                    bitmap.recycle()
+                                }
+
+                                if (frameCount >= maxFrames) break
+                            }
+                            zipFrameIndex++
+                        }
                     }
                     entry = zip.nextEntry
                 }
             }
 
-            // 2. Normalize and Flatten Sequence (Optimized)
-            var totalInSequence = 0
-            val sequenceDir = File(tempDir, "sequence").apply { mkdirs() }
-            val rawDir = File(tempDir, "raw")
-            
-            fun getAllSubdirs(file: File): List<File> {
-                val subdirs = file.listFiles { it.isDirectory }?.toList() ?: emptyList()
-                return subdirs + subdirs.flatMap { getAllSubdirs(it) }
-            }
-            val availableFolders = (getAllSubdirs(rawDir) + rawDir).distinct()
-
-            // Calculate sampling to target ~15fps
-            val sourceFps = desc.fps.coerceAtLeast(1)
-            val samplingInterval = (sourceFps / 15).coerceAtLeast(1)
-            val maxTotalFrames = 300 // Cap total frames for speed
-
-            for ((index, part) in desc.parts.withIndex()) {
-                if (totalInSequence >= maxTotalFrames) break
-                
-                val searchFolder = part.folder.replace("\\", "/").trim('/').lowercase().removePrefix("./")
-                val matchedFolder = availableFolders.find { 
-                    val relativePath = it.absolutePath.removePrefix(rawDir.absolutePath).trim('/').lowercase()
-                    relativePath == searchFolder || relativePath.endsWith("/$searchFolder") || (searchFolder.isEmpty() && relativePath.isEmpty())
-                }
-                
-                if (matchedFolder == null) continue
-                
-                val sourceFrames = matchedFolder.listFiles()?.filter { 
-                    it.isFile && !it.name.startsWith(".") && 
-                    (it.name.endsWith(".png", true) || it.name.endsWith(".jpg", true) || 
-                     it.name.endsWith(".jpeg", true) || it.name.endsWith(".webp", true))
-                }?.sortedBy { it.name } ?: emptyList()
-
-                if (sourceFrames.isNotEmpty()) {
-                    val normalizedPartFrames = mutableListOf<File>()
-                    // Sample frames to save time
-                    for (i in sourceFrames.indices step samplingInterval) {
-                        val srcFile = sourceFrames[i]
-                        try {
-                            // OPTIMIZATION: Decode with scaling to 256x256 immediately
-                            val options = BitmapFactory.Options().apply {
-                                inJustDecodeBounds = true
-                            }
-                            BitmapFactory.decodeFile(srcFile.absolutePath, options)
-                            
-                            options.inSampleSize = calculateInSampleSize(options, 256, 256)
-                            options.inJustDecodeBounds = false
-                            options.inPreferredConfig = Bitmap.Config.RGB_565 // Faster decoding
-                            
-                            val bitmap = BitmapFactory.decodeFile(srcFile.absolutePath, options)
-                            if (bitmap != null) {
-                                // OPTIMIZATION: Save as JPG instead of PNG for faster I/O
-                                val normFile = File(tempDir, "norm_${index}_${i}.jpg")
-                                FileOutputStream(normFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
-                                }
-                                normalizedPartFrames.add(normFile)
-                                bitmap.recycle()
-                            }
-                        } catch (e: Exception) {
-                            // Skip failing frames
-                        }
-                    }
-
-                    if (normalizedPartFrames.isNotEmpty()) {
-                        val loops = if (part.loop <= 0) 1 else part.loop
-                        // Cap loops to avoid massive sequences
-                        val limitedLoops = loops.coerceAtMost(3)
-                        
-                        repeat(limitedLoops) {
-                            for (normFile in normalizedPartFrames) {
-                                if (totalInSequence >= maxTotalFrames) break
-                                val dstFile = File(sequenceDir, "frame_%06d.jpg".format(totalInSequence++))
-                                normFile.copyTo(dstFile, overwrite = true)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (totalInSequence == 0) {
+            if (frameCount == 0) {
                 tempDir.deleteRecursively()
                 onComplete(false)
                 return
             }
 
-            // 3. Simple FFmpeg Command (Fast)
-            // Use the sampled rate as input
-            // Use 'mpeg4' instead of 'libx264' for broader compatibility with basic FFmpeg builds
             val inputFps = (sourceFps / samplingInterval).coerceAtLeast(1)
-            val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black,setpts=0.25*PTS\" -c:v mpeg4 -q:v 5 \"${outputMp4File.absolutePath}\""
-            DiagnosticLogger.log("ffmpeg", "creating mp4", command)
+            // Use 'mpeg4' with 256x256 resolution as requested.
+            // Using a slightly higher quality (-q:v 6) but ensuring fast start.
+            val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black\" -c:v mpeg4 -q:v 6 -movflags +faststart \"${outputMp4File.absolutePath}\""
+
+            DiagnosticLogger.log("ffmpeg", "fast mp4 gen", command)
 
             FFmpegKit.executeAsync(command) { session ->
-                if (ReturnCode.isSuccess(session.returnCode)) {
-                    tempDir.deleteRecursively()
-                    onComplete(true)
-                } else {
-                    DiagnosticLogger.log("ffmpeg", "creating mp4 Error", "RC ${session.returnCode}")
-                    tempDir.deleteRecursively()
-                    onComplete(false)
-                }
+                tempDir.deleteRecursively()
+                onComplete(ReturnCode.isSuccess(session.returnCode))
             }
         } catch (e: Exception) {
             tempDir.deleteRecursively()

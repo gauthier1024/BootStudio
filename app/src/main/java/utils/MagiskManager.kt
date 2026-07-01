@@ -64,11 +64,11 @@ object MagiskManager {
             "chmod 644 \"$moduleZipPath\"",
             "chown root:root \"$moduleZipPath\""
         )
-        return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "changing bootanimation")
+        return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "changing bootanim")
     }
 
     fun setDefaultAnimation(targetSystemPath: String): String {
         val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
-        return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"", purpose = "reverting bootanimation")
+        return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"", purpose = "reverting bootanim")
     }
 }

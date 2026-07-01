@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -50,6 +51,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -334,15 +336,19 @@ fun HomeScreen(
                     Text("No animations found in assets/bootanimations/", color = Color.Gray)
                 }
             } else {
+                // Increase the viewport cache to keep off-screen items initialized and playing
                 LazyColumn(
+                    contentPadding = PaddingValues(bottom = 100.dp), // Extra padding for pre-loading
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(animations, key = { it.path }) { anim ->
-                        val isApplied = if (anim.tag == "System") {
-                            appliedPath == "system_default"
-                        } else {
-                            appliedPath == anim.path
+                        val isApplied = remember(appliedPath, anim.path, anim.tag) {
+                            if (anim.tag == "System") {
+                                appliedPath == "system_default"
+                            } else {
+                                appliedPath == anim.path
+                            }
                         }
 
                         AnimationCard(
