@@ -3,8 +3,10 @@ package com.bootstudio.ui.screens
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.widget.Toast
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,21 +22,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.NotificationCompat
-import coil.ImageLoader
-import coil.compose.AsyncImage
-import coil.decode.GifDecoder
-import coil.decode.ImageDecoderDecoder
-import coil.request.ImageRequest
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import com.bootstudio.ui.components.VideoPreview
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -60,18 +64,6 @@ fun CommunityScreen() {
     val jsonUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/main/BootAnimations/bootanimations.json"
     val baseUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/main/BootAnimations/"
 
-    val imageLoader = remember {
-        ImageLoader.Builder(context)
-            .components {
-                if (Build.VERSION.SDK_INT >= 28) {
-                    add(ImageDecoderDecoder.Factory())
-                } else {
-                    add(GifDecoder.Factory())
-                }
-            }
-            .build()
-    }
-
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             try {
@@ -90,7 +82,7 @@ fun CommunityScreen() {
                             title = title,
                             creator = creator,
                             downloadUrl = "${baseUrl}${title}/bootanimation.zip",
-                            previewUrl = "${baseUrl}${title}/preview.gif"
+                            previewUrl = "${baseUrl}${title}/preview.mp4"
                         )
                     )
                 }
@@ -162,7 +154,6 @@ fun CommunityScreen() {
                         CommunityAnimationCard(
                             animation = anim,
                             isDownloading = downloadingItems.contains(anim.title),
-                            imageLoader = imageLoader,
                             onDownload = {
                                 downloadingItems.add(anim.title)
                                 scope.launch {
@@ -179,11 +170,11 @@ fun CommunityScreen() {
     }
 }
 
+
 @Composable
 fun CommunityAnimationCard(
     animation: CommunityAnimation,
     isDownloading: Boolean,
-    imageLoader: ImageLoader,
     onDownload: () -> Unit
 ) {
     val context = LocalContext.current
@@ -201,23 +192,14 @@ fun CommunityAnimationCard(
             modifier = Modifier.fillMaxSize().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Preview GIF
+            // Preview MP4
             Box(
                 modifier = Modifier
                     .size(104.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(Color.Black)
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(animation.previewUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = null,
-                    imageLoader = imageLoader,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
+                VideoPreview(uri = Uri.parse(animation.previewUrl))
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -291,7 +273,7 @@ private suspend fun downloadAnimation(
 
             val previewDir = File(context.filesDir, "previews")
             if (!previewDir.exists()) previewDir.mkdirs()
-            val targetPreviewFile = File(previewDir, "${targetFile.name}_v4.gif")
+            val targetPreviewFile = File(previewDir, "${targetFile.name}.mp4")
 
             // Download Zip
             val url = URL(anim.downloadUrl)
@@ -322,7 +304,7 @@ private suspend fun downloadAnimation(
                     }
                 }
 
-                // Download Preview GIF
+                // Download Preview MP4
                 try {
                     val previewUrl = URL(anim.previewUrl)
                     val previewConnection = previewUrl.openConnection() as HttpURLConnection

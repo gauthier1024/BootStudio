@@ -193,11 +193,11 @@ object BootAnimParser {
         return null
     }
 
-    fun generatePreviewGif(context: Context, zipFile: File, outputGifFile: File, onComplete: (Boolean) -> Unit) {
+    fun generatePreviewMp4(context: Context, zipFile: File, outputMp4File: File, onComplete: (Boolean) -> Unit) {
         val desc = parseDesc(zipFile) ?: return onComplete(false)
         try {
             zipFile.inputStream().use { inputStream ->
-                generatePreviewGifFromStream(context, inputStream, desc, outputGifFile, onComplete)
+                generatePreviewMp4FromStream(context, inputStream, desc, outputMp4File, onComplete)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -205,11 +205,11 @@ object BootAnimParser {
         }
     }
 
-    fun generatePreviewGifFromAssets(context: Context, assetPath: String, outputGifFile: File, onComplete: (Boolean) -> Unit) {
+    fun generatePreviewMp4FromAssets(context: Context, assetPath: String, outputMp4File: File, onComplete: (Boolean) -> Unit) {
         val desc = parseDescFromAssets(context, assetPath) ?: return onComplete(false)
         try {
             context.assets.open(assetPath).use { inputStream ->
-                generatePreviewGifFromStream(context, inputStream, desc, outputGifFile, onComplete)
+                generatePreviewMp4FromStream(context, inputStream, desc, outputMp4File, onComplete)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -230,13 +230,18 @@ object BootAnimParser {
         return inSampleSize
     }
 
-    private fun generatePreviewGifFromStream(
+    private fun generatePreviewMp4FromStream(
         context: Context,
         inputStream: InputStream,
         desc: BootAnimDesc,
-        outputGifFile: File,
+        outputMp4File: File,
         onComplete: (Boolean) -> Unit
     ) {
+        val parentDir = outputMp4File.parentFile
+        if (parentDir != null && !parentDir.exists()) {
+            parentDir.mkdirs()
+        }
+
         val tempDir = File(context.cacheDir, "preview_gen_${System.currentTimeMillis()}")
         if (!tempDir.exists() && !tempDir.mkdirs()) {
             onComplete(false)
@@ -351,16 +356,17 @@ object BootAnimParser {
 
             // 3. Simple FFmpeg Command (Fast)
             // Use the sampled rate as input
+            // Use 'mpeg4' instead of 'libx264' for broader compatibility with basic FFmpeg builds
             val inputFps = (sourceFps / samplingInterval).coerceAtLeast(1)
-            val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black,setpts=0.25*PTS,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=none\" \"${outputGifFile.absolutePath}\""
-            DiagnosticLogger.log("ffmpeg", "creating gif", command)
+            val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black,setpts=0.25*PTS\" -c:v mpeg4 -q:v 5 \"${outputMp4File.absolutePath}\""
+            DiagnosticLogger.log("ffmpeg", "creating mp4", command)
 
             FFmpegKit.executeAsync(command) { session ->
                 if (ReturnCode.isSuccess(session.returnCode)) {
                     tempDir.deleteRecursively()
                     onComplete(true)
                 } else {
-                    DiagnosticLogger.log("ffmpeg", "creating gif Error", "RC ${session.returnCode}")
+                    DiagnosticLogger.log("ffmpeg", "creating mp4 Error", "RC ${session.returnCode}")
                     tempDir.deleteRecursively()
                     onComplete(false)
                 }

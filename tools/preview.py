@@ -22,7 +22,7 @@ os.system("clear")
 
 print(CYAN)
 print("╔══════════════════════════════════════════════╗")
-print("║         Bootanimation → GIF Preview         ║")
+print("║         Bootanimation → MP4 Preview         ║")
 print("╚══════════════════════════════════════════════╝")
 print(RESET)
 
@@ -142,18 +142,18 @@ try:
     print(f"\nFrames extracted : {index}")
 
     # --------------------------------------------------
-    # Create GIF
+    # Create MP4 H264
     # --------------------------------------------------
 
     print()
     print("──────────────────────────────────────────────")
-    print("[3/4] Creating GIF...")
+    print("[3/4] Creating MP4 H264...")
     print("──────────────────────────────────────────────")
 
-    gif = f"{name}.gif"
+    mp4 = f"{name}.mp4"
 
-    if os.path.exists(gif):
-        os.remove(gif)
+    if os.path.exists(mp4):
+        os.remove(mp4)
 
     subprocess.run([
         "ffmpeg",
@@ -166,10 +166,19 @@ try:
         "crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:(ih-min(iw\\,ih))/2,"
         "scale=256:256,"
         "setpts=PTS/4",
-        "-loop",
-        "0",
-        gif
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        mp4
     ], check=True)
+
 
     # --------------------------------------------------
     # Result
@@ -180,9 +189,9 @@ try:
     print("[4/4] Finished")
     print("──────────────────────────────────────────────")
 
-    if os.path.isfile(gif) and os.path.getsize(gif) > 0:
+    if os.path.isfile(mp4) and os.path.getsize(mp4) > 0:
 
-        size = os.path.getsize(gif)
+        size = os.path.getsize(mp4)
 
         units = ["B", "KB", "MB", "GB"]
         i = 0
@@ -194,16 +203,16 @@ try:
         print()
         print(GREEN)
         print("╔══════════════════════════════════════════════╗")
-        print("║              ✓ GIF Created                  ║")
+        print("║            ✓ MP4 H264 Created               ║")
         print("╚══════════════════════════════════════════════╝")
         print(RESET)
 
-        print(f"🎞 File : {gif}")
+        print(f"🎞 File : {mp4}")
         print(f"💾 Size : {size:.2f} {units[i]}")
 
     else:
 
-        print(f"\n{RED}[!] GIF creation failed{RESET}")
+        print(f"\n{RED}[!] MP4 creation failed{RESET}")
 
 finally:
     shutil.rmtree(tmp, ignore_errors=True)

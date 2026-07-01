@@ -59,6 +59,7 @@ import utils.CommandExecutor
 import utils.DiagnosticLogger
 import utils.FFmpegDownloader
 import utils.MagiskManager
+import com.bootstudio.ui.components.VideoPreview
 import java.io.File
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -185,19 +186,19 @@ fun HomeScreen(
                 val fileToParse = if (anim.isAsset) null else File(procPath)
                 val desc = if (anim.isAsset) BootAnimParser.parseDescFromAssets(context, anim.path) else BootAnimParser.parseDesc(fileToParse!!)
 
-                // GIF Preview Generation (v4 for OOM fix and better folder matching)
+                // MP4 Preview Generation (OOM fix and better folder matching)
                 val previewFileName = if (anim.isAsset) {
-                    anim.path.replace("/", "_") + "_v4.gif"
+                    anim.path.replace("/", "_") + ".mp4"
                 } else if (anim.tag == "System") {
                     // For system animation, use a name that identifies it as the original backup
                     val backupFileName = anim.path.trimStart('/').replace('/', '_')
-                    "original_${backupFileName}_v4.gif"
+                    "original_${backupFileName}.mp4"
                 } else if (anim.tag == "Community") {
                     // For community animations, use a fixed name based on the filename
-                    "${File(anim.path).name}_v4.gif"
+                    "${File(anim.path).name}.mp4"
                 } else {
                     val file = File(procPath)
-                    "${file.nameWithoutExtension}_${file.length()}_${file.lastModified()}_v4.gif"
+                    "${file.nameWithoutExtension}_${file.length()}_${file.lastModified()}.mp4"
                 }
                 val previewFile = File(previewDir, previewFileName)
 
@@ -214,9 +215,9 @@ fun HomeScreen(
                         }
                     }
                     if (anim.isAsset) {
-                        BootAnimParser.generatePreviewGifFromAssets(context, anim.path, previewFile, onComplete)
+                        BootAnimParser.generatePreviewMp4FromAssets(context, anim.path, previewFile, onComplete)
                     } else {
-                        BootAnimParser.generatePreviewGif(context, File(procPath), previewFile, onComplete)
+                        BootAnimParser.generatePreviewMp4(context, File(procPath), previewFile, onComplete)
                     }
                 }
 
@@ -631,7 +632,7 @@ fun AnimationCard(
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 1. Preview GIF with Play Button fallback
+            // 1. Preview MP4 with Play Button fallback
             Box(
                 modifier = Modifier
                     .size(84.dp)
@@ -640,7 +641,7 @@ fun AnimationCard(
                     .clickable { onPlay() }
             ) {
                 if (animation.previewUri != null && !animation.generationFailed) {
-                    GifPreview(animation.previewUri, onLoadingFailed = onPreviewFailed)
+                    VideoPreview(animation.previewUri, onLoadingFailed = onPreviewFailed)
                 } else if (animation.generationFailed) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.5f))
@@ -756,61 +757,6 @@ fun AnimationCard(
     }
 }
 
-@Composable
-fun GifPreview(uri: Uri, onLoadingFailed: () -> Unit = {}) {
-    val context = LocalContext.current
-    val drawableState = remember(uri) { mutableStateOf<android.graphics.drawable.Drawable?>(null) }
-
-    LaunchedEffect(uri) {
-        withContext(Dispatchers.IO) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    val source = ImageDecoder.createSource(context.contentResolver, uri)
-                    val drawable = ImageDecoder.decodeDrawable(source)
-                    if (drawable is AnimatedImageDrawable) {
-                        drawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
-                        drawable.start()
-                    }
-                    withContext(Dispatchers.Main) {
-                        drawableState.value = drawable
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                withContext(Dispatchers.Main) {
-                    onLoadingFailed()
-                }
-            }
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = {
-                ImageView(context).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                }
-            },
-            update = { imageView ->
-                val drawable = drawableState.value
-                if (drawable != null) {
-                    if (imageView.drawable != drawable) {
-                        imageView.setImageDrawable(drawable)
-                    }
-                } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                    imageView.setImageURI(uri)
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        if (drawableState.value == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-            }
-        }
-    }
-}
 
 @Composable
 fun BootAnimPlayer(animation: BootAnimation, onDismiss: () -> Unit) {

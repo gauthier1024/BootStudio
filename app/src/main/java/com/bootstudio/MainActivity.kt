@@ -109,10 +109,10 @@ class MainActivity : ComponentActivity() {
                                     // 3. Setup the new path
                                     MagiskManager.createMagiskModule(newPath)
                                     
-                                    // 4. Clear the preview GIF for the new system path to force recreation
+                                    // 4. Clear the preview MP4 for the new system path to force recreation
                                     val previewDir = File(filesDir, "previews")
                                     val backupFileName = newPath.trimStart('/').replace('/', '_')
-                                    val previewFile = File(previewDir, "original_${backupFileName}_v4.gif")
+                                    val previewFile = File(previewDir, "original_${backupFileName}.mp4")
                                     if (previewFile.exists()) previewFile.delete()
                                 }
                                 
