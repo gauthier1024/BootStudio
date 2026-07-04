@@ -25,7 +25,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import java.io.File
-import utils.FFmpegDownloader
 import utils.CommandExecutor
 import utils.DiagnosticLogger
 import utils.MagiskManager
@@ -38,8 +37,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DiagnosticLogger.init(this)
-        
-        FFmpegDownloader.initLoader(this)
+        com.arthenica.ffmpegkit.FFmpegKit.init(this)
         
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
         val initialPath = prefs.getString("boot_anim_path", null)

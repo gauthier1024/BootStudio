@@ -88,12 +88,6 @@ fun CreateScreen() {
     var generationStatus by remember { mutableStateOf("") }
     var generationProgress by remember { mutableStateOf(0f) }
 
-    // FFmpeg Download State
-    var showFFmpegDialog by remember { mutableStateOf(false) }
-    var isDownloadingFFmpeg by remember { mutableStateOf(false) }
-    var ffmpegDownloadProgress by remember { mutableStateOf(0f) }
-    var ffmpegStatusMessage by remember { mutableStateOf("") }
-
     // Validation Dialogs
     var validationErrors by remember { mutableStateOf<List<String>>(emptyList()) }
     var validationWarnings by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -129,7 +123,7 @@ fun CreateScreen() {
                     isPickingAudio = false
                     return@launch
                 }
-                
+
                 val isGif = context.contentResolver.getType(it)?.contains("gif") == true
                 var selectedDuration = 0L
                 var currentSourceWidth = 0
@@ -146,21 +140,30 @@ fun CreateScreen() {
                             tempGif.outputStream().use { output -> input.copyTo(output) }
                         }
 
-                        val session = FFmpegKit.execute("-i ${tempGif.absolutePath}")
+                        val session = FFmpegKit.execute("-i '${tempGif.absolutePath}'")
                         val output = session.allLogsAsString
-                        
+                        DiagnosticLogger.log("ffmpeg", "gif probe output", output)
+
                         // Extract resolution (e.g., 500x300)
                         val resRegex = Regex(" (\\d{2,5})x(\\d{2,5})")
                         val resMatch = resRegex.find(output)
                         if (resMatch != null) {
                             currentSourceWidth = resMatch.groupValues[1].toInt()
                             currentSourceHeight = resMatch.groupValues[2].toInt()
+                        } else {
+                            DiagnosticLogger.log("ffmpeg", "gif probe error", "Could not find resolution in output")
                         }
 
                         // Extract FPS (e.g., 15 fps)
                         val fpsRegex = Regex(" (\\d{1,3}(\\.\\d+)?) fps")
                         val fpsMatch = fpsRegex.find(output)
                         currentSourceFps = fpsMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 30.0
+
+                        if (output.contains("Unknown decoder") || output.contains("unsupported")) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "FFmpeg GIF support missing. Please recompile with updated FfmpegBuild.md", Toast.LENGTH_LONG).show()
+                            }
+                        }
 
                         // Duration is harder for GIFs via ffmpeg info, default to 1000ms if not found
                         // or better, extract total frames if possible. For now, estimate duration
@@ -190,6 +193,9 @@ fun CreateScreen() {
                                     currentSourceFps = frameCount / (selectedDuration / 1000.0)
                                 }
                             }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            currentSourceFps = 30.0
                         } finally {
                             retriever.release()
                         }
@@ -233,7 +239,7 @@ fun CreateScreen() {
                     withContext(Dispatchers.IO) {
                         try {
                             var finalAvgSize = 0L
-                            
+
                             if (isGif) {
                                 // For GIFs, we can estimate frame size by extracting just the first frame
                                 // Using a faster extraction method
@@ -245,41 +251,46 @@ fun CreateScreen() {
                                 }
                                 val outFrame = File(estDir, "frame.png")
                                 // Use -vframes 1 for instant extraction of the first frame
-                                FFmpegKit.execute("-y -i ${tempGif.absolutePath} -vframes 1 ${outFrame.absolutePath}")
+                                FFmpegKit.execute("-y -i '${tempGif.absolutePath}' -vframes 1 '${outFrame.absolutePath}'")
                                 if (outFrame.exists()) {
                                     finalAvgSize = (outFrame.length() * 1.15).toLong()
                                 }
                                 estDir.deleteRecursively()
                             } else {
                                 val retriever = MediaMetadataRetriever()
-                                retriever.setDataSource(context, it)
-                                
-                                // Sample only 2 frames (start and middle) to speed up significantly
-                                var totalSize = 0L
-                                var count = 0
-                                val times = listOf(0.1, 0.5) 
-                                
-                                for (multiplier in times) {
-                                    // Use OPTION_PREVIOUS_SYNC for much faster seeking
-                                    val frame = retriever.getFrameAtTime(
-                                        (selectedDuration * multiplier).toLong() * 1000,
-                                        MediaMetadataRetriever.OPTION_PREVIOUS_SYNC
-                                    )
-                                    frame?.let { bmp ->
-                                        val tempFile = File(context.cacheDir, "size_est_${count}.png")
-                                        tempFile.outputStream().use { out ->
-                                            // 100% quality is still needed for accurate size, but fewer frames = faster
-                                            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                                try {
+                                    retriever.setDataSource(context, it)
+
+                                    // Sample only 2 frames (start and middle) to speed up significantly
+                                    var totalSize = 0L
+                                    var count = 0
+                                    val times = listOf(0.1, 0.5)
+
+                                    for (multiplier in times) {
+                                        // Use OPTION_PREVIOUS_SYNC for much faster seeking
+                                        val frame = retriever.getFrameAtTime(
+                                            (selectedDuration * multiplier).toLong() * 1000,
+                                            MediaMetadataRetriever.OPTION_PREVIOUS_SYNC
+                                        )
+                                        frame?.let { bmp ->
+                                            val tempFile = File(context.cacheDir, "size_est_${count}.png")
+                                            tempFile.outputStream().use { out ->
+                                                // 100% quality is still needed for accurate size, but fewer frames = faster
+                                                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                                            }
+                                            totalSize += tempFile.length()
+                                            count++
+                                            tempFile.delete()
                                         }
-                                        totalSize += tempFile.length()
-                                        count++
-                                        tempFile.delete()
                                     }
+                                    if (count > 0) finalAvgSize = (totalSize / count * 1.15).toLong()
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                } finally {
+                                    retriever.release()
                                 }
-                                if (count > 0) finalAvgSize = (totalSize / count * 1.15).toLong()
-                                retriever.release()
                             }
-                            
+
                             withContext(Dispatchers.Main) {
                                 if (isAdvanced && activePartIndex >= 0) {
                                     parts = parts.toMutableList().also { list ->
@@ -412,9 +423,9 @@ fun CreateScreen() {
                         width = ""
                         height = ""
                         parts = listOf(
-                            AnimationPartState(type = "p", repeats = "0", delay = "0", folder = "part0"),
-                            AnimationPartState(type = "p", repeats = "0", delay = "0", folder = "part1"),
-                            AnimationPartState(type = "p", repeats = "0", delay = "0", folder = "part2")
+                            AnimationPartState(type = "p", repeats = "0", delay = "0", folder = "folder0"),
+                            AnimationPartState(type = "p", repeats = "0", delay = "0", folder = "folder1"),
+                            AnimationPartState(type = "p", repeats = "0", delay = "0", folder = "folder2")
                         )
                     },
                     modifier = Modifier.scale(0.8f).padding(start = 4.dp)
@@ -469,7 +480,7 @@ fun CreateScreen() {
                 )
                 Row {
                     IconButton(onClick = {
-                        parts = parts.toMutableList().also { it.add(AnimationPartState(folder = "part${parts.size}")) }
+                        parts = parts.toMutableList().also { it.add(AnimationPartState(folder = "folder${parts.size}")) }
                     }) {
                         Icon(Icons.Default.Add, contentDescription = "Add line")
                     }
@@ -590,11 +601,6 @@ fun CreateScreen() {
         // 3. Generate Button
         Button(
             onClick = {
-                if (!FFmpegDownloader.isInstalled(context)) {
-                    showFFmpegDialog = true
-                    return@Button
-                }
-
                 val currentErrors = mutableListOf<String>()
                 val currentWarnings = mutableListOf<String>()
 
@@ -616,6 +622,10 @@ fun CreateScreen() {
                     for (part in parts) {
                         if (part.uri == null) continue
 
+                        // MMR is crash-prone for GIFs, and we don't strictly need this check for GIFs
+                        val isPartGif = context.contentResolver.getType(part.uri)?.contains("gif") == true
+                        if (isPartGif) continue
+
                         val retriever = MediaMetadataRetriever()
                         try {
                             retriever.setDataSource(context, part.uri)
@@ -628,11 +638,14 @@ fun CreateScreen() {
                                     currentWarnings.add("Part \"${part.folder}\" uses 'complete' type with a video longer than ${COMPLETE_PART_WARNING_MS / 1000} seconds. This might significantly slow down your boot time.")
                                 }
                             }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         } finally {
                             retriever.release()
                         }
                     }
-                } else {
+                }
+                else {
                     // Standard Mode FPS Warning (already handled above generally, but ensuring logic flow)
                 }
 
@@ -667,7 +680,14 @@ fun CreateScreen() {
                 .fillMaxWidth()
                 .height(56.dp),
             shape = RoundedCornerShape(16.dp),
-            enabled = if (isAdvanced) parts.all { it.uri != null } && !isGenerating else selectedUri != null && !isGenerating
+            enabled = if (isAdvanced) {
+                fps.isNotEmpty() && width.isNotEmpty() && height.isNotEmpty() &&
+                        parts.isNotEmpty() && parts.all {
+                    it.uri != null && it.folder.isNotEmpty() && it.repeats.isNotEmpty() && it.delay.isNotEmpty()
+                } && !isGenerating
+            } else {
+                selectedUri != null && fps.isNotEmpty() && width.isNotEmpty() && height.isNotEmpty() && !isGenerating
+            }
         ) {
             if (isGenerating) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
@@ -683,58 +703,6 @@ fun CreateScreen() {
         Spacer(modifier = Modifier.height(32.dp))
     }
 
-    if (showFFmpegDialog) {
-        AlertDialog(
-            onDismissRequest = { if (!isDownloadingFFmpeg) showFFmpegDialog = false },
-            title = { Text(if (isDownloadingFFmpeg) "Downloading FFmpeg" else "FFmpeg Required") },
-            text = {
-                Column {
-                    Text(if (isDownloadingFFmpeg)
-                        "Please wait while FFmpeg is being installed..."
-                    else "FFmpeg is required to process and extract frames from videos.")
-
-                    if (isDownloadingFFmpeg) {
-                        Spacer(Modifier.height(16.dp))
-                        LinearProgressIndicator(
-                            progress = ffmpegDownloadProgress,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Text(
-                            text = "${(ffmpegDownloadProgress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.End
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                if (!isDownloadingFFmpeg) {
-                    TextButton(onClick = {
-                        isDownloadingFFmpeg = true
-                        scope.launch {
-                            val success = FFmpegDownloader.downloadAndInstall(context) { progress, message ->
-                                ffmpegDownloadProgress = progress
-                                if (message != null) ffmpegStatusMessage = message
-                            }
-                            isDownloadingFFmpeg = false
-                            if (success) showFFmpegDialog = false
-                        }
-                    }) {
-                        Text("Download")
-                    }
-                }
-            },
-            dismissButton = {
-                if (!isDownloadingFFmpeg) {
-                    TextButton(onClick = { showFFmpegDialog = false }) {
-                        Text("Cancel")
-                    }
-                }
-            }
-        )
-    }
-
     if (isGenerating) {
         AlertDialog(
             onDismissRequest = { },
@@ -742,17 +710,59 @@ fun CreateScreen() {
                 Text(
                     text = "Creating Animation",
                     modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(16.dp))
-                    Text(generationStatus, textAlign = TextAlign.Center)
+                    // Circular Progress with Percentage
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
+                        CircularProgressIndicator(
+                            progress = generationProgress,
+                            modifier = Modifier.fillMaxSize(),
+                            strokeWidth = 8.dp,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "${(generationProgress * 100).toInt()}%",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "complete",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(32.dp))
+
+                    Text(
+                        text = generationStatus,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+
+                    LinearProgressIndicator(
+                        progress = generationProgress,
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
                 }
             },
             confirmButton = {}
@@ -838,7 +848,7 @@ fun CreateScreen() {
                         startAdvancedGeneration()
                     } else {
                         // Handle standard mode generation from warning
-                         scope.launch {
+                        scope.launch {
                             generateBootAnimation(
                                 context, selectedUri, fileName, fps, width, height,
                                 onProgress = { status: String, progress: Float ->
@@ -904,15 +914,46 @@ private suspend fun generateBootAnimation(
                 }
             }
 
+            // Get total duration to calculate progress
+            val retriever = MediaMetadataRetriever()
+            var totalDuration = 0L
+            val isGif = context.contentResolver.getType(uri)?.contains("gif") == true
+
+            if (!isGif) {
+                try {
+                    retriever.setDataSource(sourceFile.absolutePath)
+                    totalDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 1000L
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    retriever.release()
+                }
+            } else {
+                // For GIFs, we already have an estimate or we can just use 2000ms as default for progress
+                totalDuration = 2000L
+            }
+
             // 2. FFmpeg Command to resize and extract frames
             // -vf scale=w:h,fps=fps
             val scaleFilter = if (width.isNotEmpty() && height.isNotEmpty()) "scale=$width:$height," else ""
             val videoFps = if (fps.isNotEmpty()) fps else "30"
+            val totalFrames = ((totalDuration / 1000.0) * videoFps.toDouble()).toInt().coerceAtLeast(1)
 
-            val extractCommand = "-y -i ${sourceFile.absolutePath} -vf \"${scaleFilter}fps=$videoFps\" ${part0Dir.absolutePath}/%05d.png"
+            val extractCommand = "-y -nostdin -i '${sourceFile.absolutePath}' -vf \"${scaleFilter}fps=$videoFps\" -threads 4 '${part0Dir.absolutePath}/%05d.png'"
             DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
 
-            val session = FFmpegKit.execute(extractCommand)
+            val session = FFmpegKit.execute(extractCommand) { line ->
+                if (line.contains("frame=")) {
+                    val match = Regex("frame=\\s*(\\d+)").find(line)
+                    match?.groupValues?.get(1)?.toIntOrNull()?.let { frame ->
+                        val progress = (frame.toFloat() / totalFrames).coerceIn(0f, 1f)
+                        // Extraction is about 70% of the total process
+                        val finalProgress = 0.1f + (progress * 0.6f)
+                        val status = "Extracting frames ($frame/$totalFrames)..."
+                        onProgress(status, finalProgress)
+                    }
+                }
+            }
             if (!ReturnCode.isSuccess(session.returnCode)) {
                 DiagnosticLogger.log("ffmpeg", "creating bootanim Error", "RC ${session.returnCode}")
                 withContext(Dispatchers.Main) { onComplete(false) }
@@ -985,7 +1026,7 @@ private suspend fun generateAdvancedBootAnimation(
             parts.forEachIndexed { index, part ->
                 if (part.uri == null) return@forEachIndexed
 
-                onProgress("Processing part ${part.folder}...", (index.toFloat() / parts.size) * 0.8f)
+                onProgress("Processing ${part.folder}...", (index.toFloat() / parts.size) * 0.8f)
 
                 val partDir = File(workDir, part.folder)
                 partDir.mkdirs()
@@ -996,10 +1037,41 @@ private suspend fun generateAdvancedBootAnimation(
                 }
 
                 val scaleFilter = "scale=$targetWidth:$targetHeight"
-                val extractCommand = "-y -i ${sourceFile.absolutePath} -vf \"${scaleFilter},fps=$videoFps\" ${partDir.absolutePath}/%05d.png"
+                val extractCommand = "-y -nostdin -i '${sourceFile.absolutePath}' -vf \"${scaleFilter},fps=$videoFps\" -threads 4 '${partDir.absolutePath}/%05d.png'"
                 DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
 
-                val session = FFmpegKit.execute(extractCommand)
+                // Estimate total frames for this part
+                val retriever = MediaMetadataRetriever()
+                var partDuration = 0L
+                val isPartGif = context.contentResolver.getType(part.uri)?.contains("gif") == true
+
+                if (!isPartGif) {
+                    try {
+                        retriever.setDataSource(sourceFile.absolutePath)
+                        partDuration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 1000L
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    } finally {
+                        retriever.release()
+                    }
+                } else {
+                    partDuration = 2000L
+                }
+                val totalPartFrames = ((partDuration / 1000.0) * videoFps.toDouble()).toInt().coerceAtLeast(1)
+
+                val session = FFmpegKit.execute(extractCommand) { line ->
+                    if (line.contains("frame=")) {
+                        val match = Regex("frame=\\s*(\\d+)").find(line)
+                        match?.groupValues?.get(1)?.toIntOrNull()?.let { frame ->
+                            val partProgress = (frame.toFloat() / totalPartFrames).coerceIn(0f, 1f)
+                            val baseProgress = (index.toFloat() / parts.size) * 0.8f
+                            val currentPartWeight = (1.0f / parts.size) * 0.8f
+                            val finalProgress = baseProgress + (partProgress * currentPartWeight)
+                            val status = "Processing ${part.folder} ($frame/$totalPartFrames)..."
+                            onProgress(status, finalProgress)
+                        }
+                    }
+                }
                 if (!ReturnCode.isSuccess(session.returnCode)) {
                     DiagnosticLogger.log("ffmpeg", "creating bootanim Error", "RC ${session.returnCode}")
                     withContext(Dispatchers.Main) { onComplete(false) }
@@ -1017,7 +1089,7 @@ private suspend fun generateAdvancedBootAnimation(
                     context.contentResolver.openInputStream(audioUri)?.use { input ->
                         audioSourceFile.outputStream().use { output -> input.copyTo(output) }
                     }
-                    
+
                     val audioTargetFile = File(partDir, "audio.wav")
                     // Convert to wav if needed, or just copy if already wav
                     val extension = context.contentResolver.getType(audioUri)?.split("/")?.last() ?: "wav"
@@ -1025,7 +1097,7 @@ private suspend fun generateAdvancedBootAnimation(
                         audioSourceFile.copyTo(audioTargetFile, overwrite = true)
                     } else {
                         // Use ffmpeg to convert to wav
-                        val convertCommand = "-y -i ${audioSourceFile.absolutePath} ${audioTargetFile.absolutePath}"
+                        val convertCommand = "-y -i '${audioSourceFile.absolutePath}' '${audioTargetFile.absolutePath}'"
                         DiagnosticLogger.log("ffmpeg", "converting audio", convertCommand)
                         FFmpegKit.execute(convertCommand)
                     }
@@ -1096,7 +1168,7 @@ fun SequenceLine(
             ExposedDropdownMenuBox(
                 expanded = expanded,
                 onExpandedChange = { expanded = !expanded },
-                modifier = Modifier.weight(0.7f)
+                modifier = Modifier.weight(0.8f)
             ) {
                 OutlinedTextField(
                     value = part.type.uppercase(),
@@ -1136,7 +1208,7 @@ fun SequenceLine(
                 value = part.repeats,
                 onValueChange = { onUpdate(part.copy(repeats = it)) },
                 label = { Text("Loop", fontSize = 9.sp) },
-                modifier = Modifier.weight(0.7f),
+                modifier = Modifier.weight(0.8f),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 shape = RoundedCornerShape(8.dp),
                 singleLine = true,
@@ -1147,18 +1219,8 @@ fun SequenceLine(
                 value = part.delay,
                 onValueChange = { onUpdate(part.copy(delay = it)) },
                 label = { Text("Delay", fontSize = 9.sp) },
-                modifier = Modifier.weight(0.7f),
+                modifier = Modifier.weight(0.8f),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                shape = RoundedCornerShape(8.dp),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp)
-            )
-            // Folder
-            OutlinedTextField(
-                value = part.folder,
-                onValueChange = { if (it.length <= 6) onUpdate(part.copy(folder = it)) },
-                label = { Text("Folder", fontSize = 9.sp) },
-                modifier = Modifier.weight(0.85f),
                 shape = RoundedCornerShape(8.dp),
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp)
@@ -1167,7 +1229,7 @@ fun SequenceLine(
             // Media Picker for this part
             Box(
                 modifier = Modifier
-                    .weight(0.85f)
+                    .weight(1.1f)
                     .clickable { onPickMedia() }
             ) {
                 OutlinedTextField(
@@ -1192,7 +1254,7 @@ fun SequenceLine(
             // Audio Picker for this part
             Box(
                 modifier = Modifier
-                    .weight(0.85f)
+                    .weight(1.1f)
                     .clickable { onPickAudio() }
             ) {
                 OutlinedTextField(

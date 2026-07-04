@@ -312,7 +312,7 @@ object BootAnimParser {
             val inputFps = (sourceFps / samplingInterval).coerceAtLeast(1)
             // Use 'mpeg4' with 256x256 resolution as requested.
             // Using a slightly higher quality (-q:v 6) but ensuring fast start.
-            val command = "-y -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black\" -c:v mpeg4 -q:v 6 -movflags +faststart \"${outputMp4File.absolutePath}\""
+            val command = "-y -nostdin -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black\" -c:v mpeg4 -q:v 6 -movflags +faststart \"${outputMp4File.absolutePath}\""
 
             DiagnosticLogger.log("ffmpeg", "fast mp4 gen", command)
 

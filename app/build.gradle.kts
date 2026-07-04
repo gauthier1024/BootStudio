@@ -11,6 +11,8 @@ android {
         }
     }
 
+    ndkVersion = "27.0.12077973"
+
     defaultConfig {
         applicationId = "com.bootstudio"
         compileSdk = 35
@@ -21,7 +23,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
         ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
+            abiFilters.add("arm64-v8a")
+        }
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("foss") {
+            dimension = "distribution"
+        }
+        create("standard") {
+            dimension = "distribution"
         }
     }
 
@@ -47,43 +59,6 @@ android {
             excludes += "/META-INF/NOTICE*"
             excludes += "/META-INF/*.kotlin_module"
         }
-        jniLibs {
-            // Exclude all FFmpeg-related native libraries from the APK
-            // since they are downloaded at runtime.
-            excludes += "**/libav*.so"
-            excludes += "**/libsw*.so"
-            excludes += "**/libffmpeg*.so"
-            excludes += "**/libx264.so"
-            excludes += "**/libx265.so"
-            excludes += "**/libvpx.so"
-            excludes += "**/libwebp.so"
-            excludes += "**/libopus.so"
-            excludes += "**/libvorbis*.so"
-            excludes += "**/libtheora.so"
-            excludes += "**/libmp3lame.so"
-            excludes += "**/libass.so"
-            excludes += "**/libfreetype.so"
-            excludes += "**/libfribidi.so"
-            excludes += "**/libfontconfig.so"
-            excludes += "**/libgnutls.so"
-            excludes += "**/libgmp.so"
-            excludes += "**/libiconv.so"
-            excludes += "**/libxml2.so"
-            excludes += "**/libopencore-amr*.so"
-            excludes += "**/libshine.so"
-            excludes += "**/libsnappy.so"
-            excludes += "**/libsoxr.so"
-            excludes += "**/libspeex.so"
-            excludes += "**/libvidstab.so"
-            excludes += "**/libzimg.so"
-            excludes += "**/libsrt.so"
-            excludes += "**/libtesseract.so"
-            excludes += "**/librubberband.so"
-            excludes += "**/libopenh264.so"
-            excludes += "**/libchromaprint.so"
-            excludes += "**/libkvazaar.so"
-            excludes += "**/libdav1d.so"
-        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -104,7 +79,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.ffmpeg.kit)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.coil.compose)

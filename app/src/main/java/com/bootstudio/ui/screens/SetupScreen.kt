@@ -31,8 +31,6 @@ fun SetupScreen(onSetupComplete: (String, List<String>) -> Unit) {
     var foundPaths by remember { mutableStateOf<List<String>>(emptyList()) }
     var consoleLines by remember { mutableStateOf<List<ConsoleLine>>(emptyList()) }
     var selectedPath by remember { mutableStateOf<String?>(null) }
-    var downloadProgress by remember { mutableStateOf(0f) }
-    var lastErrorMessage by remember { mutableStateOf<String?>(null) }
 
     val scope = rememberCoroutineScope()
 
@@ -46,30 +44,6 @@ fun SetupScreen(onSetupComplete: (String, List<String>) -> Unit) {
             "/system/product/media/bootanimation.zip"
         )
         selectedPath = priority.firstOrNull { paths.contains(it) } ?: paths.firstOrNull()
-    }
-
-    fun startDownload() {
-        currentStep = SetupStep.DOWNLOAD_FFMPEG
-        statusMessage = "Connecting to download server..."
-        lastErrorMessage = null
-        scope.launch {
-            val success = FFmpegDownloader.downloadAndInstall(context) { progress, error ->
-                if (error != null) {
-                    lastErrorMessage = error
-                } else {
-                    statusMessage = "Downloading FFmpeg binaries..."
-                    downloadProgress = progress
-                }
-            }
-            if (success) {
-                statusMessage = "Libraries downloaded."
-                delay(500)
-                currentStep = SetupStep.DONE
-            } else {
-                statusMessage = lastErrorMessage ?: "Download failed. Please check your connection."
-                // Stay on the same step to show error and retry button
-            }
-        }
     }
 
     fun startSearch() {
@@ -200,27 +174,8 @@ fun SetupScreen(onSetupComplete: (String, List<String>) -> Unit) {
                             selectedPath = selectedPath,
                             onPathSelect = { selectedPath = it },
                             onContinueClick = {
-                                if (!FFmpegDownloader.isInstalled(context)) {
-                                    currentStep = SetupStep.ASK_DOWNLOAD_FFMPEG
-                                } else {
-                                    currentStep = SetupStep.DONE
-                                }
+                                currentStep = SetupStep.DONE
                             }
-                        )
-                    }
-
-                    SetupStep.ASK_DOWNLOAD_FFMPEG -> {
-                        AskDownloadStep(
-                            onDownloadClick = { startDownload() }
-                        )
-                    }
-
-                    SetupStep.DOWNLOAD_FFMPEG -> {
-                        DownloadProgressStep(
-                            downloadProgress = downloadProgress,
-                            statusMessage = statusMessage,
-                            errorMessage = lastErrorMessage,
-                            onRetryClick = { startDownload() }
                         )
                     }
 

@@ -72,10 +72,8 @@ object CommandExecutor {
     }
 
     fun executeWithSu(command: String, purpose: String = "Internal", onLine: ((String) -> Unit)? = null): String {
-        // Si la session n'est pas initialisée, on tente de le faire
         if (suProcess == null || suWriter == null) {
             if (!initRootSession()) {
-                // Fallback sur l'ancienne méthode si l'initialisation échoue
                 return executeWithSuLegacy(command)
             }
         }
@@ -85,7 +83,6 @@ object CommandExecutor {
             val writer = suWriter!!
             val reader = suReader!!
             
-            // On utilise un délimiteur unique pour savoir quand la commande est finie
             val delimiter = "END_OF_COMMAND_${System.currentTimeMillis()}"
             
             writer.write("$command\n")
@@ -94,11 +91,18 @@ object CommandExecutor {
 
             val output = StringBuilder()
             var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                if (line == delimiter) break
-                line?.let {
-                    output.append(it).append("\n")
-                    onLine?.invoke(it)
+            
+            // This loop ensures we don't get stuck if FFmpeg takes a long time
+            while (true) {
+                line = reader.readLine()
+                if (line == null || line == delimiter) break
+                
+                output.append(line).append("\n")
+                onLine?.invoke(line)
+                
+                // If it's an ffmpeg command, log the progress periodically
+                if (purpose == "ffmpeg" && line.contains("frame=")) {
+                    Log.d("FFmpeg-Progress", line)
                 }
             }
             

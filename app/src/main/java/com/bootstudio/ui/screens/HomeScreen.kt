@@ -321,11 +321,13 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "My Library",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                )
+                Column {
+                    Text(
+                        text = "My Library",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
                 IconButton(onClick = onSettings) {
                     Icon(Icons.Default.Settings, contentDescription = "Settings")
                 }
