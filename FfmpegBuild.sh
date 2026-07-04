@@ -2,14 +2,62 @@
 # FFmpeg Build Script for BootStudio (F-Droid Compatible)
 
 # 1. Setup Environment
-# F-Droid provides ANDROID_NDK_HOME. Fallback to your local path for development.
-NDK=${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/27.0.12077973}
-TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
-API=24
-FFMPEG_SRC="ffmpeg-src"
-OUTPUT_DIR="$(pwd)/build/arm64-v8a"
+echo "Searching for Android NDK toolchain..."
+
+# Priority 1: ANDROID_NDK_HOME
+if [ -n "$ANDROID_NDK_HOME" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+    NDK="$ANDROID_NDK_HOME"
+fi
+
+# Priority 2: Deep search in /opt (standard for CI)
+if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+    echo "Searching /opt for clang..."
+    CLANG_PATH=$(find /opt -name "clang" -type f | grep "toolchains/llvm/prebuilt" | head -n 1)
+    if [ -n "$CLANG_PATH" ]; then
+        TOOLCHAIN=$(dirname $(dirname "$CLANG_PATH"))
+        NDK=$(echo "$TOOLCHAIN" | sed 's|/toolchains/.*||')
+    fi
+fi
+
+# Priority 3: Local fallback (Only if not in Docker/CI)
+if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+    if [ -d "/repo" ]; then
+        echo "Error: NDK not found in /opt inside Docker container."
+        exit 1
+    fi
+    NDK=$HOME/Android/Sdk/ndk/27.0.12077973
+fi
+
+if [ ! -d "$NDK" ]; then
+    echo "Error: Android NDK not found at $NDK"
+    exit 1
+fi
 
 echo "Using NDK: $NDK"
+
+# Find the prebuilt toolchain directory
+if [ -z "$TOOLCHAIN" ]; then
+    TOOLCHAIN=$(find "$NDK" -name "llvm" -type d -prune)/prebuilt/linux-x86_64
+    if [ ! -d "$TOOLCHAIN" ]; then
+        TOOLCHAIN=$(find "$NDK" -path "*/prebuilt/*" -type d -maxdepth 4 | head -n 1)
+    fi
+fi
+
+echo "Toolchain path: $TOOLCHAIN"
+CC=$TOOLCHAIN/bin/clang
+CXX=$TOOLCHAIN/bin/clang++
+AR=$TOOLCHAIN/bin/llvm-ar
+NM=$TOOLCHAIN/bin/llvm-nm
+RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+STRIP=$TOOLCHAIN/bin/llvm-strip
+
+API=24
+TARGET=aarch64-linux-android
+
+# Use first argument as FFmpeg source path
+FFMPEG_SRC="${1:-ffmpeg-src}"
+OUTPUT_DIR="$(pwd)/build/arm64-v8a"
+mkdir -p "$OUTPUT_DIR"
 
 # 2. Get FFmpeg Source if missing
 if [ ! -d "$FFMPEG_SRC" ]; then
@@ -18,7 +66,7 @@ if [ ! -d "$FFMPEG_SRC" ]; then
 fi
 
 cd "$FFMPEG_SRC" || exit 1
-make clean
+[ -f Makefile ] && make clean
 
 # 3. Configure
 echo "Configuring FFmpeg..."
@@ -28,12 +76,15 @@ echo "Configuring FFmpeg..."
 --arch=aarch64 \
 --cpu=armv8-a \
 --enable-cross-compile \
---cc=$TOOLCHAIN/bin/aarch64-linux-android$API-clang \
---cxx=$TOOLCHAIN/bin/aarch64-linux-android$API-clang++ \
---ar=$TOOLCHAIN/bin/llvm-ar \
---nm=$TOOLCHAIN/bin/llvm-nm \
---ranlib=$TOOLCHAIN/bin/llvm-ranlib \
---strip=$TOOLCHAIN/bin/llvm-strip \
+--cc=$CC \
+--cxx=$CXX \
+--ar=$AR \
+--as=$CC \
+--nm=$NM \
+--ranlib=$RANLIB \
+--strip=$STRIP \
+--extra-cflags="-target $TARGET$API -fPIC" \
+--extra-ldflags="-target $TARGET$API -lz" \
 --disable-static \
 --enable-shared \
 --enable-pic \
@@ -56,8 +107,7 @@ echo "Configuring FFmpeg..."
 --enable-encoder=png,mpeg4,pcm_s16le \
 --enable-muxer=image2,wav,mp4,mov \
 --enable-protocol=file,pipe \
---enable-filter=scale,fps,pad,null,format \
---extra-ldflags="-L$TOOLCHAIN/sysroot/usr/lib/aarch64-linux-android/$API -lz"
+--enable-filter=scale,fps,pad,null,format || { tail -n 50 ffbuild/config.log; exit 1; }
 
 # 4. Build
 echo "Building FFmpeg..."
@@ -75,10 +125,6 @@ cp build/arm64-v8a/lib/libavformat.so "$ASSETS_DIR/"
 cp build/arm64-v8a/lib/libavutil.so "$ASSETS_DIR/"
 cp build/arm64-v8a/lib/libswresample.so "$ASSETS_DIR/"
 cp build/arm64-v8a/lib/libswscale.so "$ASSETS_DIR/"
-# Note: libavdevice might not be built if not enabled, check if needed
-if [ -f "build/arm64-v8a/lib/libavdevice.so" ]; then
-    cp build/arm64-v8a/lib/libavdevice.so "$ASSETS_DIR/"
-fi
 cp build/arm64-v8a/bin/ffmpeg "$ASSETS_DIR/ffmpeg-bin"
 
 echo "Finished"

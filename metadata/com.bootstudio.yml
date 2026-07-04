@@ -2,15 +2,13 @@ Categories:
   - System
   - Multimedia
 License: GPL-3.0-only
-AuthorName: Gauthier
-WebSite: https://github.com/Gauthier/BootStudio
-SourceCode: https://github.com/Gauthier/BootStudio
-IssueTracker: https://github.com/Gauthier/BootStudio/issues
+AuthorName: gauthier1024
+WebSite: https://github.com/gauthier1024/BootStudio
+SourceCode: https://github.com/gauthier1024/BootStudio
+IssueTracker: https://github.com/gauthier1024/BootStudio/issues
+RequiresRoot: true
 
-AntiFeatures:
-  - Root
-
-Summary: Customize your boot animations systemlessly with Magisk.
+Summary: Customize your boot animations with Magisk
 Description: |-
     BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly, using Magisk.
 
@@ -36,8 +34,13 @@ Builds:
     subdir: app
     gradle:
       - fossRelease
+    sudo:
+      - apt-get update || true
+      - apt-get install -y make build-essential
+    srclibs:
+      - FFmpeg@n6.1
     prebuild:
-      - pushd .. && bash FfmpegBuild.sh && popd
+      - cd .. && bash FfmpegBuild.sh $$FFmpeg$$
     ndk: r27b
 
 AutoUpdateMode: Version v%v

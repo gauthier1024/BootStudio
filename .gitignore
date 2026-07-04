@@ -19,3 +19,6 @@ app/src/main/assets/ffmpeg-bin
 app/src/main/assets/lib*.so
 ffmpeg-src/
 build/
+srclibs/
+fdroid-venv/
+repo/
