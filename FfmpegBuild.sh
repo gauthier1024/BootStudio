@@ -1,7 +1,9 @@
 #!/bin/bash
-# FFmpeg Build Script for BootStudio (F-Droid Compatible)
+set -e
+set -o pipefail
 
-# 1. Setup Environment
+PROJECT_ROOT="$(pwd)"
+
 echo "Searching for Android NDK toolchain..."
 
 # Priority 1: ANDROID_NDK_HOME
@@ -65,8 +67,10 @@ if [ ! -d "$FFMPEG_SRC" ]; then
     git clone --depth 1 --branch n6.1 https://github.com/FFmpeg/FFmpeg.git "$FFMPEG_SRC"
 fi
 
+echo "Cleaning FFmpeg source tree..."
 cd "$FFMPEG_SRC" || exit 1
-[ -f Makefile ] && make clean
+git clean -dfx
+git reset --hard
 
 # 3. Configure
 echo "Configuring FFmpeg..."
@@ -93,6 +97,9 @@ echo "Configuring FFmpeg..."
 --disable-network \
 --disable-autodetect \
 --disable-everything \
+--disable-avdevice \
+--disable-alsa \
+--disable-v4l2 \
 --enable-ffmpeg \
 --enable-avcodec \
 --enable-avformat \
@@ -111,20 +118,25 @@ echo "Configuring FFmpeg..."
 
 # 4. Build
 echo "Building FFmpeg..."
-make -j$(nproc)
+make -j1
 make install
-cd ..
+
+cd "$PROJECT_ROOT"
 
 # 5. Copy results to App Assets
+
 ASSETS_DIR="app/src/main/assets"
 echo "Copying binaries to $ASSETS_DIR..."
 mkdir -p "$ASSETS_DIR"
-cp build/arm64-v8a/lib/libavcodec.so "$ASSETS_DIR/"
-cp build/arm64-v8a/lib/libavfilter.so "$ASSETS_DIR/"
-cp build/arm64-v8a/lib/libavformat.so "$ASSETS_DIR/"
-cp build/arm64-v8a/lib/libavutil.so "$ASSETS_DIR/"
-cp build/arm64-v8a/lib/libswresample.so "$ASSETS_DIR/"
-cp build/arm64-v8a/lib/libswscale.so "$ASSETS_DIR/"
-cp build/arm64-v8a/bin/ffmpeg "$ASSETS_DIR/ffmpeg-bin"
 
+for lib in avcodec avfilter avformat avutil swresample swscale; do
+    src="$OUTPUT_DIR/lib/lib${lib}.so"
+    if [ ! -f "$src" ]; then
+        echo "ERROR: $src not found"
+        exit 1
+    fi
+    cp "$src" "$ASSETS_DIR/"
+done
+
+cp "$OUTPUT_DIR/bin/ffmpeg" "$ASSETS_DIR/ffmpeg-bin"
 echo "Finished"
