@@ -8,29 +8,13 @@ SourceCode: https://github.com/gauthier1024/BootStudio
 IssueTracker: https://github.com/gauthier1024/BootStudio/issues
 RequiresRoot: true
 
-Summary: Customize your boot animations with Magisk
-Description: |-
-    BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly, using Magisk.
-
-    Features:
-    * Animation Management: List, switch, and delete boot animations easily.
-    * Custom Creation: Package your own animation files into the correct format.
-    * Import/Export: Backup your current animation or import external .zip files.
-    * Community Store: Browse and download animations shared by other users.
-    * Systemless Application: All changes are applied via a Magisk module to keep your device's system partition intact.
-    * Live Preview: View animations within the app before applying them to your device.
-
-    Requirements:
-    * A rooted Android device.
-    * Magisk installed.
-
 RepoType: git
 Repo: https://github.com/gauthier1024/BootStudio
 
 Builds:
   - versionName: '1.0'
     versionCode: 1
-    commit: v1.0
+    commit: fdc98158578dd7ea6fc7122ddd71e287ade6109e
     subdir: app
     gradle:
       - fossRelease

@@ -22,3 +22,5 @@ build/
 srclibs/
 fdroid-venv/
 repo/
+app/foss/
+app/release/
