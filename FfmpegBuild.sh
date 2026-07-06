@@ -76,6 +76,7 @@ git reset --hard
 echo "Configuring FFmpeg..."
 ./configure \
 --prefix="$OUTPUT_DIR" \
+--datadir=/build/arm64-v8a/share/ffmpeg \
 --target-os=android \
 --arch=aarch64 \
 --cpu=armv8-a \
@@ -120,7 +121,7 @@ sed -i 's/^#define FFMPEG_CONFIGURATION.*/#define FFMPEG_CONFIGURATION "reproduc
 # 4. Build
 echo "Building FFmpeg..."
 make -j1
-make install
+make install-libs install-progs
 
 cd "$PROJECT_ROOT"
 

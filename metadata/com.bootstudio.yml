@@ -1,33 +1,50 @@
 Categories:
-  - System
   - Multimedia
+  - System
 License: GPL-3.0-only
 AuthorName: gauthier1024
 WebSite: https://github.com/gauthier1024/BootStudio
 SourceCode: https://github.com/gauthier1024/BootStudio
 IssueTracker: https://github.com/gauthier1024/BootStudio/issues
+
+AutoName: BootStudio
+
 RequiresRoot: true
 
 RepoType: git
-Repo: https://github.com/gauthier1024/BootStudio
+Repo: https://github.com/gauthier1024/BootStudio.git
+Binaries: 
+  https://github.com/gauthier1024/BootStudio/releases/download/BootStudio-v%v/BootStudio.apk
 
 Builds:
-  - versionName: '1.0'
-    versionCode: 1
-    commit: fdc98158578dd7ea6fc7122ddd71e287ade6109e
+  - versionName: 1.1.0
+    versionCode: 4
+    commit: 9397ccf0e9bc6e5cdd445bdcd70113cc965eb8e7
     subdir: app
-    gradle:
-      - fossRelease
     sudo:
       - apt-get update || true
-      - apt-get install -y make build-essential
+      - apt-get install -y make build-essential patchelf
+    gradle:
+      - foss
     srclibs:
-      - FFmpeg@n6.1
-    prebuild:
-      - cd .. && bash FfmpegBuild.sh $$FFmpeg$$
-    ndk: r27b
+      - BootStudio-FFmpeg@n6.1
+    prebuild: cd .. && bash FfmpegBuild.sh $$BootStudio-FFmpeg$$
+    scanignore:
+      - BootAnimations/
+      - app/src/main/assets/libavcodec.so
+      - app/src/main/assets/libavfilter.so
+      - app/src/main/assets/libavformat.so
+      - app/src/main/assets/libavutil.so
+      - app/src/main/assets/libswresample.so
+      - app/src/main/assets/libswscale.so
+      - app/src/main/assets/ffmpeg-bin
+    scandelete:
+      - build/
+    ndk: r27
 
-AutoUpdateMode: Version v%v
+AllowedAPKSigningKeys: 9f67ed1abc18916c691af6ec9efd93c303f2188e8e0df327d5956ceb3b6c6857
+
+AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: '1.0'
-CurrentVersionCode: 1
+CurrentVersion: 1.1.0
+CurrentVersionCode: 4
