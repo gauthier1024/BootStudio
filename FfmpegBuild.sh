@@ -14,7 +14,7 @@ fi
 # Priority 2: Deep search in /opt (standard for CI)
 if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
     echo "Searching /opt for clang..."
-    CLANG_PATH=$(find /opt -name "clang" -type f | grep "toolchains/llvm/prebuilt" | head -n 1)
+    CLANG_PATH=$(find /opt -name "clang" -type f 2>/dev/null | grep "toolchains/llvm/prebuilt" | head -n 1 || true)
     if [ -n "$CLANG_PATH" ]; then
         TOOLCHAIN=$(dirname $(dirname "$CLANG_PATH"))
         NDK=$(echo "$TOOLCHAIN" | sed 's|/toolchains/.*||')
@@ -87,7 +87,7 @@ echo "Configuring FFmpeg..."
 --nm=$NM \
 --ranlib=$RANLIB \
 --strip=$STRIP \
---extra-cflags="-target $TARGET$API -fPIC" \
+--extra-cflags="-target $TARGET$API -fPIC -ffile-prefix-map=$(pwd)=/build -ffile-prefix-map=$NDK=/ndk" \
 --extra-ldflags="-target $TARGET$API -lz" \
 --disable-static \
 --enable-shared \
@@ -98,8 +98,6 @@ echo "Configuring FFmpeg..."
 --disable-autodetect \
 --disable-everything \
 --disable-avdevice \
---disable-alsa \
---disable-v4l2 \
 --enable-ffmpeg \
 --enable-avcodec \
 --enable-avformat \
@@ -115,6 +113,9 @@ echo "Configuring FFmpeg..."
 --enable-muxer=image2,wav,mp4,mov \
 --enable-protocol=file,pipe \
 --enable-filter=scale,fps,pad,null,format || { tail -n 50 ffbuild/config.log; exit 1; }
+
+# Normalize embedded configuration string (removes machine-specific absolute paths)
+sed -i 's/^#define FFMPEG_CONFIGURATION.*/#define FFMPEG_CONFIGURATION "reproducible-build"/' config.h
 
 # 4. Build
 echo "Building FFmpeg..."
