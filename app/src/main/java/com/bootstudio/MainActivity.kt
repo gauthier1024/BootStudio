@@ -1,6 +1,8 @@
 package com.bootstudio
 
+import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -25,19 +27,25 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import java.io.File
+import utils.BootAnimParser
 import utils.CommandExecutor
 import utils.DiagnosticLogger
 import utils.MagiskManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.lifecycleScope
 
 class MainActivity : ComponentActivity() {
+
+    private var importTrigger = mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DiagnosticLogger.init(this)
         com.arthenica.ffmpegkit.FFmpegKit.init(this)
+        
+        handleIntent(intent)
         
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
         val initialPath = prefs.getString("boot_anim_path", null)
@@ -45,6 +53,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val scope = rememberCoroutineScope()
+            val refreshCount by remember { importTrigger }
             BootStudioTheme {
                 var currentPath by remember { mutableStateOf(initialPath) }
                 var hasRoot by remember { mutableStateOf<Boolean?>(null) }
@@ -91,6 +100,7 @@ class MainActivity : ComponentActivity() {
                 } else if (hasRoot == true) {
                     MainScreen(
                         currentPath = currentPath ?: "",
+                        refreshTrigger = refreshCount,
                         onPathChange = { newPath ->
                             val oldPath = currentPath
                             scope.launch {
@@ -108,7 +118,7 @@ class MainActivity : ComponentActivity() {
                                     MagiskManager.createMagiskModule(newPath)
                                     
                                     // 4. Clear the preview MP4 for the new system path to force recreation
-                                    val previewDir = File(filesDir, "previews")
+                                    val previewDir = File(cacheDir, "previews")
                                     val backupFileName = newPath.trimStart('/').replace('/', '_')
                                     val previewFile = File(previewDir, "original_${backupFileName}.mp4")
                                     if (previewFile.exists()) previewFile.delete()
@@ -133,10 +143,68 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) {
+            val uri = intent.data ?: return
+            lifecycleScope.launch(Dispatchers.IO) {
+                val tempFile = File(cacheDir, "import_intent_${System.currentTimeMillis()}.zip")
+                try {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        tempFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    
+                    val desc = BootAnimParser.parseDesc(tempFile)
+                    if (desc == null) {
+                        tempFile.delete()
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(this@MainActivity, "Invalid bootanimation file", Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
+
+                    val libraryDir = File(filesDir, "library")
+                    if (!libraryDir.exists()) libraryDir.mkdirs()
+
+                    val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        cursor.moveToFirst()
+                        cursor.getString(nameIndex)
+                    } ?: "imported_${System.currentTimeMillis()}.zip"
+
+                    val targetFile = File(libraryDir, name)
+                    tempFile.renameTo(targetFile)
+                    
+                    getSharedPreferences("anim_metadata", MODE_PRIVATE)
+                        .edit()
+                        .putString("${targetFile.name}_tag", "Imported")
+                        .putString("${targetFile.name}_creator", "External")
+                        .apply()
+                    
+                    withContext(Dispatchers.Main) {
+                        importTrigger.value++
+                        Toast.makeText(this@MainActivity, "Animation imported: $name", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    tempFile.delete()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-fun MainScreen(currentPath: String, onPathChange: (String) -> Unit) {
+fun MainScreen(currentPath: String, refreshTrigger: Int = 0, onPathChange: (String) -> Unit) {
     var selectedItem by remember { mutableIntStateOf(0) }
     var previewPath by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
@@ -181,6 +249,7 @@ fun MainScreen(currentPath: String, onPathChange: (String) -> Unit) {
                     when (selectedItem) {
                         0 -> HomeScreen(
                             currentPath = currentPath,
+                            refreshTrigger = refreshTrigger,
                             onPreview = { previewPath = it },
                             onSettings = { showSettings = true }
                         )

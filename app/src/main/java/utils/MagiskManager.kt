@@ -1,5 +1,6 @@
 package utils
 
+import com.bootstudio.BuildConfig
 import java.io.File
 
 object MagiskManager {
@@ -23,9 +24,13 @@ object MagiskManager {
             "mkdir -p \"$targetDir\"",
             "mkdir -p \"$moduleRoot/original\"",
             "if [ ! -f \"$backupFile\" ]; then cp \"$setupPath\" \"$backupFile\"; fi",
-            "printf \"id=bootstudio\\nname=BootStudio Bootanimation\\nversion=1.1\\nversionCode=2\\nauthor=BootStudio\\ndescription=Custom bootanimation overlay\\n\" > $moduleRoot/module.prop",
-            "touch $moduleRoot/auto_mount",
-            "rm -f $moduleRoot/disable"
+            "printf \"id=BootStudio\\nname=BootStudio\\nversion=${BuildConfig.VERSION_NAME}\\nversionCode=${BuildConfig.VERSION_CODE}\\nauthor=gauthier1024\\ndescription=Custom bootanimation overlay\\n\" > \"$moduleRoot/module.prop\"",
+            "echo '#!/system/bin/sh' > \"$moduleRoot/action.sh\"",
+            "echo 'am start -n ${BuildConfig.APPLICATION_ID}/${BuildConfig.APPLICATION_ID}.MainActivity' >> \"$moduleRoot/action.sh\"",
+            "chmod 755 \"$moduleRoot/action.sh\"",
+            "chown root:root \"$moduleRoot/action.sh\"",
+            "touch \"$moduleRoot/auto_mount\"",
+            "rm -f \"$moduleRoot/disable\""
         )
 
         // Special handling for /data paths using bind mount via service.sh

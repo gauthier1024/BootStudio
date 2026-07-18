@@ -2,8 +2,6 @@ package com.bootstudio.ui.screens
 
 import java.util.Locale
 import android.media.MediaMetadataRetriever
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,7 +43,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import utils.DiagnosticLogger
-import utils.FFmpegDownloader
 import utils.ZipUtils
 import java.io.File
 
@@ -892,9 +889,6 @@ private suspend fun generateBootAnimation(
     if (uri == null) return
     onStart()
 
-    // Initialize FFmpeg library path
-    utils.FFmpegDownloader.initLoader(context)
-
     withContext(Dispatchers.IO) {
         try {
             val workDir = File(context.cacheDir, "generation_work")
@@ -1008,7 +1002,6 @@ private suspend fun generateAdvancedBootAnimation(
     onComplete: (Boolean) -> Unit
 ) {
     onStart()
-    utils.FFmpegDownloader.initLoader(context)
 
     withContext(Dispatchers.IO) {
         try {

@@ -95,7 +95,9 @@ object BootAnimParser {
                     width = parts[0].toIntOrNull() ?: 0
                     height = parts[1].toIntOrNull() ?: 0
                     fps = parts[2].toIntOrNull() ?: 30
-                    resolutionFound = true
+                    if (width > 0 && height > 0) {
+                        resolutionFound = true
+                    }
                 }
             } else {
                 if (parts.size >= 4) {
@@ -106,13 +108,17 @@ object BootAnimParser {
 
                     if (loop != null && pause != null) {
                         animParts.add(BootAnimPart(typeChar, loop, pause, folder))
+                        // Standard types are 'p' (play) and 'c' (play until complete)
+                        // Non-standard types like 'f', 's', or hex colors are handled but marked as non-standard
                         if (typeChar != 'p' && typeChar != 'c') {
                             isStandard = false
                         }
                     } else {
+                        // If we can't parse loop/pause, it's definitely non-standard or malformed
                         isStandard = false
                     }
                 } else if (parts.isNotEmpty()) {
+                    // Lines that don't match the 4-part format are non-standard (e.g. dynamic colors)
                     isStandard = false
                 }
             }

@@ -73,7 +73,7 @@ class DownloadService : Service() {
             if (!libraryDir.exists()) libraryDir.mkdirs()
             val targetFile = File(libraryDir, "${anim.title}.zip")
 
-            val previewDir = File(filesDir, "previews")
+            val previewDir = File(cacheDir, "previews")
             if (!previewDir.exists()) previewDir.mkdirs()
             val targetPreviewFile = File(previewDir, "${targetFile.name}.mp4")
 

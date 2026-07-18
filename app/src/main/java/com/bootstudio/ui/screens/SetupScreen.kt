@@ -16,12 +16,10 @@ import androidx.compose.ui.unit.sp
 import com.bootstudio.ui.screens.setup.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import utils.CommandExecutor
-import utils.FFmpegDownloader
 
 @Composable
 fun SetupScreen(onSetupComplete: (String, List<String>) -> Unit) {

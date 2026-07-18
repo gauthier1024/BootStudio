@@ -2,11 +2,7 @@ package com.bootstudio.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
-import android.graphics.drawable.AnimatedImageDrawable
 import android.net.Uri
-import android.os.Build
-import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -23,12 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,16 +36,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
-import androidx.media3.ui.AspectRatioFrameLayout
-import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,7 +47,6 @@ import kotlinx.coroutines.withContext
 import utils.BootAnimParser
 import utils.CommandExecutor
 import utils.DiagnosticLogger
-import utils.FFmpegDownloader
 import utils.MagiskManager
 import com.bootstudio.ui.components.VideoPreview
 import java.io.File
@@ -84,6 +71,7 @@ data class BootAnimation(
 @Composable
 fun HomeScreen(
     currentPath: String,
+    refreshTrigger: Int = 0,
     onPreview: (String) -> Unit = {},
     onSettings: () -> Unit = {}
 ) {
@@ -179,8 +167,7 @@ fun HomeScreen(
 
         // Metadata loading
         withContext(Dispatchers.IO) {
-            if (FFmpegDownloader.isInstalled(context)) FFmpegDownloader.initLoader(context)
-            val previewDir = File(context.filesDir, "previews")
+            val previewDir = File(context.cacheDir, "previews")
             if (!previewDir.exists()) previewDir.mkdirs()
 
             initialAnims.forEachIndexed { index, anim ->
@@ -275,36 +262,63 @@ fun HomeScreen(
     ) { uri ->
         uri?.let {
             scope.launch {
+                var importSuccess = false
+                var errorMessage = ""
+                
                 withContext(Dispatchers.IO) {
-                    val libraryDir = File(context.filesDir, "library")
-                    if (!libraryDir.exists()) libraryDir.mkdirs()
-
-                    val name = context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
-                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                        cursor.moveToFirst()
-                        cursor.getString(nameIndex)
-                    } ?: "imported_${System.currentTimeMillis()}.zip"
-
-                    val targetFile = File(libraryDir, name)
-                    context.contentResolver.openInputStream(it)?.use { input ->
-                        targetFile.outputStream().use { output ->
-                            input.copyTo(output)
+                    val tempFile = File(context.cacheDir, "import_check_${System.currentTimeMillis()}.zip")
+                    try {
+                        context.contentResolver.openInputStream(it)?.use { input ->
+                            tempFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
                         }
+                        
+                        // Validate the animation
+                        val desc = BootAnimParser.parseDesc(tempFile)
+                        if (desc == null) {
+                            errorMessage = "Invalid bootanimation: desc.txt is missing or malformed"
+                            tempFile.delete()
+                            return@withContext
+                        }
+
+                        val libraryDir = File(context.filesDir, "library")
+                        if (!libraryDir.exists()) libraryDir.mkdirs()
+
+                        val name = context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            cursor.moveToFirst()
+                            cursor.getString(nameIndex)
+                        } ?: "imported_${System.currentTimeMillis()}.zip"
+
+                        val targetFile = File(libraryDir, name)
+                        tempFile.renameTo(targetFile)
+                        
+                        // Save metadata for imported animation
+                        context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
+                            .edit()
+                            .putString("${targetFile.name}_tag", "Imported")
+                            .putString("${targetFile.name}_creator", "Unknown")
+                            .apply()
+                            
+                        importSuccess = true
+                    } catch (e: Exception) {
+                        errorMessage = "Import failed: ${e.message}"
+                        tempFile.delete()
                     }
-                    // Save metadata for imported animation
-                    context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
-                        .edit()
-                        .putString("${targetFile.name}_tag", "Imported")
-                        .putString("${targetFile.name}_creator", "Unknown")
-                        .apply()
                 }
-                loadAnimations()
-                // Imported successfully
+                
+                if (importSuccess) {
+                    loadAnimations()
+                    Toast.makeText(context, "Animation imported successfully", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
 
-    LaunchedEffect(currentPath) {
+    LaunchedEffect(currentPath, refreshTrigger) {
         DiagnosticLogger.init(context)
         withContext(Dispatchers.IO) { CommandExecutor.initRootSession() }
         loadAnimations()

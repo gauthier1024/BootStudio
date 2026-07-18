@@ -35,7 +35,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.net.URL
+
+// Simple in-memory cache for the animations list
+private var cachedAnimations by mutableStateOf<List<CommunityAnimation>>(emptyList())
 
 data class CommunityAnimation(
     val title: String,
@@ -47,18 +51,20 @@ data class CommunityAnimation(
 @Composable
 fun CommunityScreen() {
     val context = LocalContext.current
-    var animations by remember { mutableStateOf<List<CommunityAnimation>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    var animations by remember { mutableStateOf(cachedAnimations) }
+    var isLoading by remember { mutableStateOf(cachedAnimations.isEmpty()) }
     var showInfoDialog by remember { mutableStateOf(false) }
     
     // Collect downloading items from the service
     val downloadingItems by DownloadService.downloadingItems.collectAsState()
 
     // Use raw.githubusercontent.com for direct access to files
-    val jsonUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/main/BootAnimations/bootanimations.json"
-    val baseUrl = "https://raw.githubusercontent.com/gauthier1024/BootStudio/main/BootAnimations/"
+    val jsonUrl = "https://raw.githubusercontent.com/gauthier1024/BootAnimations/main/bootanimations.json"
+    val baseUrl = "https://raw.githubusercontent.com/gauthier1024/BootAnimations/main/"
 
     LaunchedEffect(Unit) {
+        if (cachedAnimations.isNotEmpty()) return@LaunchedEffect
+        
         withContext(Dispatchers.IO) {
             try {
                 val response = URL(jsonUrl).readText()
@@ -80,6 +86,7 @@ fun CommunityScreen() {
                     )
                 }
                 withContext(Dispatchers.Main) {
+                    cachedAnimations = list
                     animations = list
                     isLoading = false
                 }
@@ -182,6 +189,35 @@ fun CommunityAnimationCard(
         File(context.filesDir, "library/${animation.title}.zip").exists()
     }
 
+    // Preview caching logic
+    val previewCacheDir = File(context.cacheDir, "community_previews").apply { if (!exists()) mkdirs() }
+    val localPreviewFile = File(previewCacheDir, "${animation.title}.mp4")
+    var previewUri by remember { mutableStateOf(if (localPreviewFile.exists()) Uri.fromFile(localPreviewFile) else Uri.parse(animation.previewUrl)) }
+    var isPreviewDownloading by remember { mutableStateOf(!localPreviewFile.exists()) }
+
+    LaunchedEffect(animation.previewUrl) {
+        if (!localPreviewFile.exists()) {
+            withContext(Dispatchers.IO) {
+                try {
+                    URL(animation.previewUrl).openStream().use { input ->
+                        FileOutputStream(localPreviewFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        previewUri = Uri.fromFile(localPreviewFile)
+                        isPreviewDownloading = false
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    withContext(Dispatchers.Main) {
+                        isPreviewDownloading = false
+                    }
+                }
+            }
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth().height(120.dp),
         shape = RoundedCornerShape(16.dp),
@@ -197,9 +233,14 @@ fun CommunityAnimationCard(
                 modifier = Modifier
                     .size(104.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
             ) {
-                VideoPreview(uri = Uri.parse(animation.previewUrl))
+                if (isPreviewDownloading) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                } else {
+                    VideoPreview(uri = previewUri)
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
