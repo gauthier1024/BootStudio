@@ -28,7 +28,7 @@ BootStudio is an Android application for managing and customizing boot animation
 
 To contribute an animation to the community store, follow these steps:
 
-1. Fork this repository and clone it locally.
+1. Fork https://github.com/gauthier1024/BootStudio and clone it locally.
 2. Open `BootAnimations/bootanimations.json`.
 3. Add a new JSON object with your `title` and `creator` name.
 4. Create a folder in the `BootAnimations/` directory with the exact same name as your `title`.
@@ -44,7 +44,7 @@ To contribute an animation to the community store, follow these steps:
 
 ## How it works
 
-BootStudio uses a Magisk module to overlay your custom animation on top of the system's default files. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
+BootStudio uses a Magisk/KernelSU/Apatch module to overlay your custom animation on top of the system's default files. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
 
 ## License
 
