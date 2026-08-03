@@ -24,6 +24,13 @@ BootStudio is an Android application for managing and customizing boot animation
 - **Systemless Application:** All changes are applied via a Magisk module to keep your device's system partition intact.
 - **Live Preview:** View animations within the app before applying them to your device.
 
+## Supported
+
+- ✅ Magisk
+- ❌ KernelSU/KernelSuNext
+- ❌ Apatch
+- ❌ Samsung devices
+
 ## Add your animations to the store
 
 To contribute an animation to the community store, follow these steps:
@@ -44,7 +51,7 @@ To contribute an animation to the community store, follow these steps:
 
 ## How it works
 
-BootStudio uses a Magisk/KernelSU/Apatch module to overlay your custom animation on top of the system's default files. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
+BootStudio uses a Magisk module to overlay your custom animation on top of the system's default files. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
 
 ## License
 
