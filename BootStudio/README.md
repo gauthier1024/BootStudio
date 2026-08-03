@@ -1,67 +1,58 @@
 # BootStudio
 
-BootStudio is an Android application that allows users to choose between using Shizuku or root access for executing commands. This application is built using Jetpack Compose for the UI and follows modern Android development practices.
+BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly, using Magisk.
+
+<details>
+<summary><strong>📷 Click to see screenshots</strong></summary>
+
+<p align="center">
+  <img src="github_assets/Screenshot_BootStudio_0.png" width="22%">
+  <img src="github_assets/Screenshot_BootStudio_1.png" width="22%">
+  <img src="github_assets/Screenshot_BootStudio_2.png" width="22%">
+  <img src="github_assets/Screenshot_BootStudio_3.png" width="22%">
+
+</p>
+
+</details>
 
 ## Features
 
-- User-friendly interface to select between Shizuku and root access.
-- Utilizes Kotlin coroutines for asynchronous command execution.
-- Displays results or errors from command execution directly in the UI.
+- **Animation Management:** List, switch, and delete boot animations easily.
+- **Custom Creation:** Package your own animation files into the correct format.
+- **Import/Export:** Backup your current animation or import external .zip files.
+- **Community Store:** Browse and download animations shared by other users.
+- **Systemless Application:** All changes are applied via a Magisk module to keep your device's system partition intact.
+- **Live Preview:** View animations within the app before applying them to your device.
 
-## Project Structure
+## Supported
 
-```
-BootStudio
-├── app
-│   ├── src
-│   │   └── main
-│   │       ├── AndroidManifest.xml
-│   │       ├── java
-│   │       │   ├── utils
-│   │       │   │   └── CommandExecutor.kt
-│   │       │   └── com
-│   │       │       └── bootstudio
-│   │       │           ├── MainActivity.kt
-│   │       │           └── ui
-│   │       │               ├── theme
-│   │       │               │   └── BootStudioTheme.kt
-│   │       │               └── screens
-│   │       │                   └── HomeScreen.kt
-│   │       └── res
-│   │           ├── layout
-│   │           │   └── activity_main.xml
-│   │           └── values
-│   │               └── strings.xml
-│   ├── build.gradle.kts
-│   └── proguard-rules.pro
-├── build.gradle.kts
-├── settings.gradle.kts
-├── gradle.properties
-├── gradle
-│   └── wrapper
-│       └── gradle-wrapper.properties
-├── gradlew
-├── gradlew.bat
-└── README.md
-```
+- ✅ Magisk
+- ❌ KernelSU/KernelSuNext
+- ❌ Apatch
+- ❌ Samsung devices
 
-## Setup Instructions
+## Add your animations to the store
 
-1. Clone the repository:
-   ```
-   git clone <repository-url>
-   ```
+To contribute an animation to the community store, follow these steps:
 
-2. Open the project in Android Studio.
+1. Fork https://github.com/gauthier1024/BootStudio and clone it locally.
+2. Open `BootAnimations/bootanimations.json`.
+3. Add a new JSON object with your `title` and `creator` name.
+4. Create a folder in the `BootAnimations/` directory with the exact same name as your `title`.
+5. Place your `bootanimation.zip` inside that folder.
+6. Generate a `preview.mp4` and place it in the same folder.
+    - You can use the `tools/preview.py` script to create the preview from your zip file.
+7. Submit a Pull Request with your changes.
 
-3. Sync the project with Gradle files.
+## Requirements
 
-4. Run the application on an Android device or emulator.
+- A rooted Android device.
+- Magisk installed.
 
-## Usage
+## How it works
 
-Upon launching the application, users will be presented with options to choose between Shizuku or root access. The selected option will determine how commands are executed within the app.
+BootStudio uses a Magisk module to overlay your custom animation on top of the system's default files. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+GPL3 License. See the LICENSE file for more details.

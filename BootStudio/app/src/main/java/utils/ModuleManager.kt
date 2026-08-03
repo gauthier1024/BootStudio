@@ -3,16 +3,21 @@ package utils
 import com.bootstudio.BuildConfig
 import java.io.File
 
-object MagiskManager {
+object ModuleManager {
 
     private const val MODULE_PATH = "/data/adb/modules/BootStudio/system"
 
     private fun getModulePathForSystemFile(systemPath: String): String {
         val path = systemPath.trim()
-        return "/data/adb/modules/BootStudio/system$path"
+        val cleanPath = if (path.startsWith("/system/")) {
+            path.substring(7) // Remove "/system" prefix but keep the leading slash from the rest
+        } else {
+            path
+        }
+        return "/data/adb/modules/BootStudio/system$cleanPath"
     }
 
-    fun createMagiskModule(setupPath: String): String {
+    fun createModule(setupPath: String): String {
         val moduleFilePath = getModulePathForSystemFile(setupPath)
         val targetDir = File(moduleFilePath).parent ?: MODULE_PATH
         
@@ -52,7 +57,7 @@ object MagiskManager {
         return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "setup")
     }
 
-    fun disableMagiskModule(): String {
+    fun disableModule(): String {
         val moduleRoot = File(MODULE_PATH).parent ?: "/data/adb/modules/BootStudio"
         return CommandExecutor.executeWithSu("touch $moduleRoot/disable", purpose = "disabling module")
     }
@@ -62,18 +67,24 @@ object MagiskManager {
         val targetDir = File(moduleZipPath).parent ?: MODULE_PATH
         val moduleRoot = File(MODULE_PATH).parent ?: "/data/adb/modules/BootStudio"
         
+        val moduleZipDarkPath = moduleZipPath.replace(".zip", "-dark.zip")
+        
         val commands = listOf(
             "rm -f $moduleRoot/disable",
             "mkdir -p \"$targetDir\"",
             "cp \"$zipPath\" \"$moduleZipPath\"",
+            "cp \"$zipPath\" \"$moduleZipDarkPath\"",
             "chmod 644 \"$moduleZipPath\"",
-            "chown root:root \"$moduleZipPath\""
+            "chmod 644 \"$moduleZipDarkPath\"",
+            "chown root:root \"$moduleZipPath\"",
+            "chown root:root \"$moduleZipDarkPath\""
         )
         return CommandExecutor.executeWithSu(commands.joinToString(" && "), purpose = "changing bootanim")
     }
 
     fun setDefaultAnimation(targetSystemPath: String): String {
         val moduleZipPath = getModulePathForSystemFile(targetSystemPath)
-        return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\"", purpose = "reverting bootanim")
+        val moduleZipDarkPath = moduleZipPath.replace(".zip", "-dark.zip")
+        return CommandExecutor.executeWithSu("rm -f \"$moduleZipPath\" \"$moduleZipDarkPath\"", purpose = "reverting bootanim")
     }
 }

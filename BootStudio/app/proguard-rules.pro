@@ -19,3 +19,15 @@
 }
 
 # Add any additional rules as needed for libraries or specific classes
+
+# Coil
+-keep class io.coilkt.** { *; }
+-dontwarn io.coilkt.**
+
+# FFmpeg Kit
+-keep class com.arthenica.ffmpegkit.** { *; }
+-dontwarn com.arthenica.ffmpegkit.**
+
+# Compose
+-keep class androidx.compose.** { *; }
+-dontwarn androidx.compose.**
