@@ -3,7 +3,6 @@ package com.bootstudio.ui.screens
 import java.util.Locale
 import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -54,9 +53,14 @@ private const val MAX_FPS_WARNING = 35
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CreateScreen() {
+fun CreateScreen(onSuccess: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    val dm = context.resources.displayMetrics
+    val deviceWidthPx = dm.widthPixels.toFloat()
+    val deviceHeightPx = dm.heightPixels.toFloat()
+    val deviceAspectRatio = deviceWidthPx / deviceHeightPx
 
     // State for inputs
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
@@ -100,8 +104,8 @@ fun CreateScreen() {
                 onStart = { isGenerating = true },
                 onComplete = { success: Boolean ->
                     isGenerating = false
-                    if (!success) {
-                        Toast.makeText(context, "Failed to create animation.", Toast.LENGTH_LONG).show()
+                    if (success) {
+                        onSuccess()
                     }
                 }
             )
@@ -121,7 +125,15 @@ fun CreateScreen() {
                     return@launch
                 }
 
-                val isGif = context.contentResolver.getType(it)?.contains("gif") == true
+                val mimeType = context.contentResolver.getType(it)
+                val isGif = mimeType?.contains("gif") == true
+                val isVideo = mimeType?.startsWith("video/") == true
+
+                if (!isGif && !isVideo) {
+                    // Reject static images
+                    return@launch
+                }
+
                 var selectedDuration = 0L
                 var currentSourceWidth = 0
                 var currentSourceHeight = 0
@@ -158,7 +170,6 @@ fun CreateScreen() {
 
                         if (output.contains("Unknown decoder") || output.contains("unsupported")) {
                             withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "FFmpeg GIF support missing. Please recompile with updated FfmpegBuild.md", Toast.LENGTH_LONG).show()
                             }
                         }
 
@@ -664,8 +675,9 @@ fun CreateScreen() {
                                 onStart = { isGenerating = true },
                                 onComplete = { success: Boolean ->
                                     isGenerating = false
-                                    if (!success) {
-                                        Toast.makeText(context, "Failed to create animation.", Toast.LENGTH_LONG).show()
+                                    if (success) {
+                                        onSuccess()
+                                    } else {
                                     }
                                 }
                             )
@@ -695,6 +707,58 @@ fun CreateScreen() {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Visual Resolution Preview (Phone Outline)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+                .padding(vertical = 16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(deviceAspectRatio)
+                    .padding(8.dp),
+                shape = RoundedCornerShape(32.dp),
+                color = Color.Black,
+                border = androidx.compose.foundation.BorderStroke(4.dp, Color(0xFF1A1A1A)),
+                shadowElevation = 16.dp
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    val targetW = width.toFloatOrNull() ?: 0f
+                    val targetH = height.toFloatOrNull() ?: 0f
+
+                    if (targetW > 0 && targetH > 0) {
+                        BoxWithConstraints(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val rectWidth = maxWidth * (targetW / deviceWidthPx)
+                            val rectHeight = maxHeight * (targetH / deviceHeightPx)
+
+                            Box(
+                                modifier = Modifier
+                                    .requiredSize(rectWidth, rectHeight)
+                                    .border(2.dp, Color.Red, RoundedCornerShape(2.dp))
+                                    .background(Color.Red.copy(alpha = 0.15f))
+                            )
+                        }
+                    }
+
+                    // Display device resolution guide
+                    Text(
+                        text = "${deviceWidthPx.toInt()}x${deviceHeightPx.toInt()}",
+                        color = Color.White.copy(alpha = 0.2f),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp)
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -776,7 +840,7 @@ fun CreateScreen() {
                     onClick = {
                         showSourceDialog = false
                         galleryLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                         )
                     }
                 ) {
@@ -855,8 +919,9 @@ fun CreateScreen() {
                                 onStart = { isGenerating = true },
                                 onComplete = { success: Boolean ->
                                     isGenerating = false
-                                    if (!success) {
-                                        Toast.makeText(context, "Failed to create animation.", Toast.LENGTH_LONG).show()
+                                    if (success) {
+                                        onSuccess()
+                                    } else {
                                     }
                                 }
                             )
@@ -933,21 +998,21 @@ private suspend fun generateBootAnimation(
             val videoFps = if (fps.isNotEmpty()) fps else "30"
             val totalFrames = ((totalDuration / 1000.0) * videoFps.toDouble()).toInt().coerceAtLeast(1)
 
-            val extractCommand = "-y -nostdin -i '${sourceFile.absolutePath}' -vf \"${scaleFilter}fps=$videoFps\" -threads 4 '${part0Dir.absolutePath}/%05d.png'"
+            val extractCommand = "-y -nostdin -i \"${sourceFile.absolutePath}\" -vf \"${scaleFilter}fps=$videoFps\" \"${part0Dir.absolutePath}/%05d.png\""
             DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
 
             val session = FFmpegKit.execute(extractCommand) { line ->
                 if (line.contains("frame=")) {
                     val match = Regex("frame=\\s*(\\d+)").find(line)
                     match?.groupValues?.get(1)?.toIntOrNull()?.let { frame ->
-                        val progress = (frame.toFloat() / totalFrames).coerceIn(0f, 1f)
-                        // Extraction is about 70% of the total process
+                        val progress = (frame.toFloat() / totalFrames.coerceAtLeast(1)).coerceIn(0f, 1f)
                         val finalProgress = 0.1f + (progress * 0.6f)
                         val status = "Extracting frames ($frame/$totalFrames)..."
                         onProgress(status, finalProgress)
                     }
                 }
             }
+
             if (!ReturnCode.isSuccess(session.returnCode)) {
                 DiagnosticLogger.log("ffmpeg", "creating bootanim Error", "RC ${session.returnCode}")
                 withContext(Dispatchers.Main) { onComplete(false) }
@@ -1029,10 +1094,6 @@ private suspend fun generateAdvancedBootAnimation(
                     sourceFile.outputStream().use { output -> input.copyTo(output) }
                 }
 
-                val scaleFilter = "scale=$targetWidth:$targetHeight"
-                val extractCommand = "-y -nostdin -i '${sourceFile.absolutePath}' -vf \"${scaleFilter},fps=$videoFps\" -threads 4 '${partDir.absolutePath}/%05d.png'"
-                DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
-
                 // Estimate total frames for this part
                 val retriever = MediaMetadataRetriever()
                 var partDuration = 0L
@@ -1052,11 +1113,15 @@ private suspend fun generateAdvancedBootAnimation(
                 }
                 val totalPartFrames = ((partDuration / 1000.0) * videoFps.toDouble()).toInt().coerceAtLeast(1)
 
+                val scaleFilter = "scale=$targetWidth:$targetHeight"
+                val extractCommand = "-y -nostdin -i \"${sourceFile.absolutePath}\" -vf \"${scaleFilter},fps=$videoFps\" \"${partDir.absolutePath}/%05d.png\""
+                DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
+
                 val session = FFmpegKit.execute(extractCommand) { line ->
                     if (line.contains("frame=")) {
                         val match = Regex("frame=\\s*(\\d+)").find(line)
                         match?.groupValues?.get(1)?.toIntOrNull()?.let { frame ->
-                            val partProgress = (frame.toFloat() / totalPartFrames).coerceIn(0f, 1f)
+                            val partProgress = (frame.toFloat() / totalPartFrames.coerceAtLeast(1)).coerceIn(0f, 1f)
                             val baseProgress = (index.toFloat() / parts.size) * 0.8f
                             val currentPartWeight = (1.0f / parts.size) * 0.8f
                             val finalProgress = baseProgress + (partProgress * currentPartWeight)
@@ -1065,6 +1130,7 @@ private suspend fun generateAdvancedBootAnimation(
                         }
                     }
                 }
+
                 if (!ReturnCode.isSuccess(session.returnCode)) {
                     DiagnosticLogger.log("ffmpeg", "creating bootanim Error", "RC ${session.returnCode}")
                     withContext(Dispatchers.Main) { onComplete(false) }

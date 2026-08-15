@@ -62,7 +62,7 @@ cd "$FFMPEG_SRC"
 --enable-encoder=png,mpeg4,pcm_s16le \
 --enable-muxer=image2,wav,mp4,mov \
 --enable-protocol=file,pipe \
---enable-filter=scale,fps,pad,null,format
+--enable-filter=scale,fps,pad,null,format,crop,setpts
 
 sed -i 's/^#define FFMPEG_CONFIGURATION.*/#define FFMPEG_CONFIGURATION "reproducible-build"/' config.h
 

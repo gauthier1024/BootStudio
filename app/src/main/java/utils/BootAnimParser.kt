@@ -108,17 +108,13 @@ object BootAnimParser {
 
                     if (loop != null && pause != null) {
                         animParts.add(BootAnimPart(typeChar, loop, pause, folder))
-                        // Standard types are 'p' (play) and 'c' (play until complete)
-                        // Non-standard types like 'f', 's', or hex colors are handled but marked as non-standard
                         if (typeChar != 'p' && typeChar != 'c') {
                             isStandard = false
                         }
                     } else {
-                        // If we can't parse loop/pause, it's definitely non-standard or malformed
                         isStandard = false
                     }
                 } else if (parts.isNotEmpty()) {
-                    // Lines that don't match the 4-part format are non-standard (e.g. dynamic colors)
                     isStandard = false
                 }
             }
@@ -223,19 +219,6 @@ object BootAnimParser {
         }
     }
 
-    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-        val (height: Int, width: Int) = options.outHeight to options.outWidth
-        var inSampleSize = 1
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight: Int = height / 2
-            val halfWidth: Int = width / 2
-            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                inSampleSize *= 2
-            }
-        }
-        return inSampleSize
-    }
-
     private fun generatePreviewMp4FromStream(
         context: Context,
         inputStream: InputStream,
@@ -254,58 +237,56 @@ object BootAnimParser {
             return
         }
 
+        val extractDir = File(tempDir, "extract").apply { mkdirs() }
+        val concatFile = File(tempDir, "concat.txt")
+
         try {
-            // OPTIMIZATION: Only extract the FIRST part to generate a quick preview
-            val firstPart = desc.parts.firstOrNull() ?: return onComplete(false)
-            val searchFolder = firstPart.folder.replace("\\", "/").trim('/').lowercase().removePrefix("./")
-
-            val sequenceDir = File(tempDir, "sequence").apply { mkdirs() }
-            var frameCount = 0
-            val maxFrames = 60 // ~2-4 seconds at 15-30fps is plenty for a thumbnail
-
-            // Sample every Nth frame to speed up extraction and encoding
-            val sourceFps = desc.fps.coerceAtLeast(1)
-            val samplingInterval = (sourceFps / 15).coerceAtLeast(1)
-
+            // 1. Extract ALL images from ZIP (raw bytes)
             ZipInputStream(inputStream.buffered()).use { zip ->
                 var entry = zip.nextEntry
-                var zipFrameIndex = 0
                 while (entry != null) {
-                    val name = entry.name.replace("\\", "/")
-                    if (!entry.isDirectory && (name.endsWith(".png", true) || name.endsWith(".jpg", true) ||
-                                name.endsWith(".jpeg", true) || name.endsWith(".webp", true))) {
-
-                        val entryFolder = name.substringBeforeLast("/", "").lowercase()
-                        if (entryFolder == searchFolder || entryFolder.endsWith("/$searchFolder")) {
-
-                            if (zipFrameIndex % samplingInterval == 0) {
-                                val frameFile = File(sequenceDir, "frame_%06d.jpg".format(frameCount++))
-
-                                // Direct decode and scale to save memory and time
-                                val options = BitmapFactory.Options().apply {
-                                    inJustDecodeBounds = true
-                                }
-                                val bytes = zip.readBytes()
-                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-
-                                options.inSampleSize = calculateInSampleSize(options, 256, 256)
-                                options.inJustDecodeBounds = false
-                                options.inPreferredConfig = Bitmap.Config.RGB_565
-
-                                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                                if (bitmap != null) {
-                                    FileOutputStream(frameFile).use { out ->
-                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out) // Lower quality for even faster I/O
-                                    }
-                                    bitmap.recycle()
-                                }
-
-                                if (frameCount >= maxFrames) break
+                    if (!entry.isDirectory) {
+                        val entryName = entry.name.replace("\\", "/")
+                        val ext = entryName.substringAfterLast(".", "").lowercase()
+                        if (listOf("png", "jpg", "jpeg", "bmp", "webp").contains(ext)) {
+                            val file = File(extractDir, entryName)
+                            file.parentFile?.mkdirs()
+                            FileOutputStream(file).use { out ->
+                                zip.copyTo(out)
                             }
-                            zipFrameIndex++
                         }
                     }
                     entry = zip.nextEntry
+                }
+            }
+
+            // 2. Build concat.txt based on desc.txt sequence
+            var frameCount = 0
+            val maxFrames = 150
+            val validExt = listOf("png", "jpg", "jpeg", "bmp", "webp")
+            
+            val inputFps = desc.fps.coerceAtLeast(1).toDouble()
+            val frameDuration = 1.0 / (inputFps * 4.0)
+
+            concatFile.bufferedWriter().use { writer ->
+                for (part in desc.parts) {
+                    val searchFolder = part.folder.removePrefix("./").removePrefix(".\\").trim('/')
+                    val partDir = File(extractDir, searchFolder)
+                    
+                    if (partDir.exists() && partDir.isDirectory) {
+                        val files = partDir.listFiles()?.filter { file ->
+                            file.isFile && validExt.contains(file.extension.lowercase())
+                        }?.sortedBy { it.name }
+                        
+                        files?.forEach { file ->
+                            if (frameCount < maxFrames) {
+                                writer.write("file '${file.absolutePath}'\n")
+                                writer.write("duration $frameDuration\n")
+                                frameCount++
+                            }
+                        }
+                    }
+                    if (frameCount >= maxFrames) break
                 }
             }
 
@@ -315,20 +296,44 @@ object BootAnimParser {
                 return
             }
 
-            val inputFps = (sourceFps / samplingInterval).coerceAtLeast(1)
-            // Use 'mpeg4' with 256x256 resolution as requested.
-            // Using a slightly higher quality (-q:v 6) but ensuring fast start.
-            val command = "-y -nostdin -framerate $inputFps -i \"${sequenceDir.absolutePath}/frame_%06d.jpg\" -vf \"scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:black\" -c:v mpeg4 -q:v 6 -movflags +faststart \"${outputMp4File.absolutePath}\""
+            // 3. Create MP4 with concat demuxer (skipping PTS/4 speedup as we control duration in concat)
+            val vf = "fps=15,crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:(ih-min(iw\\,ih))/2,scale=256:256"
+            
+            // Using concat demuxer is much faster as FFmpeg handles diverse inputs directly
+            val command = "-y -f concat -safe 0 -i \"${concatFile.absolutePath}\" " +
+                    "-vf \"$vf\" -c:v mpeg4 -q:v 5 -pix_fmt yuv420p -movflags +faststart \"${outputMp4File.absolutePath}\""
 
-            DiagnosticLogger.log("ffmpeg", "fast mp4 gen", command)
+            DiagnosticLogger.log("ffmpeg", "preview gen optimized", command)
 
-            FFmpegKit.executeAsync(command) { session ->
+            Thread {
+                val session = FFmpegKit.executeBackground(command)
                 tempDir.deleteRecursively()
                 onComplete(ReturnCode.isSuccess(session.returnCode))
-            }
+            }.start()
+
         } catch (e: Exception) {
+            e.printStackTrace()
             tempDir.deleteRecursively()
             onComplete(false)
+        }
+    }
+
+    /**
+     * Cleans up stale temporary files and folders from the cache directory.
+     */
+    fun cleanCache(context: Context) {
+        try {
+            val cacheDir = context.cacheDir
+            cacheDir.listFiles()?.forEach { file ->
+                val name = file.name
+                if (name.startsWith("preview_gen_") || 
+                    name.startsWith("temp_audio_") ||
+                    name.startsWith("temp_gif_")) {
+                    file.deleteRecursively()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }

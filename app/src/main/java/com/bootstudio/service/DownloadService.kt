@@ -22,7 +22,7 @@ class DownloadService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val activeDownloads = mutableMapOf<String, Job>()
-    
+
     companion object {
         private val _downloadingItems = MutableStateFlow<Map<String, Int>>(emptyMap())
         val downloadingItems = _downloadingItems.asStateFlow()
@@ -57,7 +57,7 @@ class DownloadService : Service() {
 
         val job = serviceScope.launch {
             _downloadingItems.update { it + (anim.title to 0) }
-            
+
             val notificationBuilder = NotificationCompat.Builder(this@DownloadService, "community_download_channel")
                 .setSmallIcon(android.R.drawable.stat_sys_download)
                 .setContentTitle("Downloading ${anim.title}")
@@ -142,7 +142,7 @@ class DownloadService : Service() {
                         .apply()
 
                     success = true
-                    
+
                     val finalNotification = NotificationCompat.Builder(this@DownloadService, "community_download_channel")
                         .setSmallIcon(android.R.drawable.stat_sys_download_done)
                         .setContentTitle("Download complete")
@@ -150,7 +150,7 @@ class DownloadService : Service() {
                         .setOngoing(false)
                         .setAutoCancel(true)
                         .build()
-                    
+
                     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     manager.notify(notificationId, finalNotification)
                 }

@@ -3,7 +3,6 @@ package com.bootstudio.ui.screens
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -20,12 +19,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,6 +37,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -47,7 +51,7 @@ import kotlinx.coroutines.withContext
 import utils.BootAnimParser
 import utils.CommandExecutor
 import utils.DiagnosticLogger
-import utils.MagiskManager
+import utils.ModuleManager
 import com.bootstudio.ui.components.VideoPreview
 import java.io.File
 import java.util.zip.ZipFile
@@ -70,36 +74,41 @@ data class BootAnimation(
 
 @Composable
 fun HomeScreen(
-    currentPath: String,
+    currentPaths: List<String>,
+    animations: SnapshotStateList<BootAnimation>,
+    isLoading: Boolean,
     refreshTrigger: Int = 0,
+    onRefreshRequest: () -> Unit = {},
     onPreview: (String) -> Unit = {},
     onSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val animations = remember { mutableStateListOf<BootAnimation>() }
     var playingAnim by remember { mutableStateOf<BootAnimation?>(null) }
     var systemAnimToUse by remember { mutableStateOf<String?>(null) }
-    var savedSystemPath by remember { mutableStateOf<String?>(null) }
+    var savedSystemPaths by remember { mutableStateOf<List<String>>(emptyList()) }
     var appliedPath by remember { mutableStateOf<String?>(null) }
+
+    var showPathSelectionDialog by remember { mutableStateOf(false) }
 
     // Actions State
     var showActionDialog by remember { mutableStateOf<BootAnimation?>(null) }
     var showRenameDialog by remember { mutableStateOf<BootAnimation?>(null) }
     var showDetailsDialog by remember { mutableStateOf<BootAnimation?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf<BootAnimation?>(null) }
+    var showRebootConfirmDialog by remember { mutableStateOf(false) }
     var exportingAnim by remember { mutableStateOf<BootAnimation?>(null) }
     var newName by remember { mutableStateOf("") }
+    var applyingPath by remember { mutableStateOf<String?>(null) }
 
-    val loadAnimations: suspend () -> Unit = {
+    // Track ongoing FFmpeg generations to avoid duplicates
+    val generatingPaths = remember { mutableSetOf<String>() }
+
+    val updateMetadata: suspend () -> Unit = {
         val prefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
-        val systemPath = currentPath
-        savedSystemPath = systemPath
+        savedSystemPaths = currentPaths
         appliedPath = prefs.getString("applied_anim_path", "system_default")
 
-        val assetList = context.assets.list("bootanimations") ?: emptyArray()
-        val zipFiles = assetList.filter { it.startsWith("bootanimation_") && it.endsWith(".zip") }
-        val initialAnims = mutableListOf<BootAnimation>()
 
         val prepareSystemAnim: suspend (String) -> String? = { sourcePath ->
             withContext(Dispatchers.IO) {
@@ -116,74 +125,52 @@ fun HomeScreen(
 
         if (cachedSystemFile.exists()) {
             localSystemPath = cachedSystemFile.absolutePath
-        } else if (systemPath != null) {
+        } else if (currentPaths.isNotEmpty()) {
+            val systemPath = currentPaths.first()
             val moduleRoot = "/data/adb/modules/BootStudio"
-            val backupFileName = systemPath.trimStart('/').replace('/', '_')
-            val backupPath = "$moduleRoot/original/$backupFileName"
-            val backupExists = withContext(Dispatchers.IO) {
-                CommandExecutor.executeWithSu("[ -f \"$backupPath\" ] && echo \"exists\"", purpose = "checking backup").contains("exists")
-            }
-            if (backupExists) {
-                localSystemPath = prepareSystemAnim(backupPath)
-            } else {
-                val detectedExists = withContext(Dispatchers.IO) {
-                    CommandExecutor.executeWithSu("[ -f \"$systemPath\" ] && echo \"exists\"", purpose = "checking system path").contains("exists")
+            val originalDir = "$moduleRoot/original"
+            val prioritizedBackup = "$originalDir/bootanimation.zip"
+            
+            val source = withContext(Dispatchers.IO) {
+                if (CommandExecutor.executeWithSu("[ -f \"$prioritizedBackup\" ] && echo yes").contains("yes")) {
+                    prioritizedBackup
+                } else {
+                    val firstFile = CommandExecutor.executeWithSu("ls \"$originalDir\" | head -n 1").trim()
+                    if (firstFile.isNotEmpty() && !firstFile.startsWith("Error:")) {
+                        "$originalDir/$firstFile"
+                    } else {
+                        systemPath
+                    }
                 }
-                if (detectedExists) {
-                    localSystemPath = prepareSystemAnim(systemPath)
-                }
             }
+            localSystemPath = prepareSystemAnim(source)
         }
         systemAnimToUse = localSystemPath
 
-        if (localSystemPath != null && systemPath != null) {
-            initialAnims.add(BootAnimation(name = "System Animation", path = systemPath, isAsset = false, tag = "System"))
-        }
-
-        zipFiles.forEach { fileName ->
-            val name = fileName.removePrefix("bootanimation_").removeSuffix(".zip")
-            initialAnims.add(BootAnimation(name = name, path = "bootanimations/$fileName", isAsset = true, tag = "Built-in"))
-        }
-
-        val libraryDir = File(context.filesDir, "library")
-        if (libraryDir.exists()) {
-            val metaPrefs = context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
-            libraryDir.listFiles()?.filter { it.extension == "zip" }?.forEach { file ->
-                val fileName = file.name
-                var tag = metaPrefs.getString("${fileName}_tag", "Created") ?: "Created"
-                if (tag == "Downloaded") tag = "Community"
-                val creator = metaPrefs.getString("${fileName}_creator", null)
-                initialAnims.add(BootAnimation(
-                    name = file.nameWithoutExtension,
-                    path = file.absolutePath,
-                    isAsset = false,
-                    tag = tag,
-                    creator = creator
-                ))
-            }
-        }
-        animations.clear()
-        animations.addAll(initialAnims)
-
-        // Metadata loading
         withContext(Dispatchers.IO) {
             val previewDir = File(context.cacheDir, "previews")
             if (!previewDir.exists()) previewDir.mkdirs()
 
-            initialAnims.forEachIndexed { index, anim ->
+            // Update previews and resolution for all animations in the list
+            val itemsToProcess = animations.toList()
+            itemsToProcess.forEach { anim ->
+                // Skip if already generating
+                if (generatingPaths.contains(anim.path)) return@forEach
+
                 val procPath = if (anim.tag == "System") systemAnimToUse ?: anim.path else anim.path
+                
+                // Safety check for file existence
+                if (anim.tag == "System" && systemAnimToUse == null) return@forEach
+                
                 val fileToParse = if (anim.isAsset) null else File(procPath)
                 val desc = if (anim.isAsset) BootAnimParser.parseDescFromAssets(context, anim.path) else BootAnimParser.parseDesc(fileToParse!!)
 
-                // MP4 Preview Generation (OOM fix and better folder matching)
                 val previewFileName = if (anim.isAsset) {
                     anim.path.replace("/", "_") + ".mp4"
                 } else if (anim.tag == "System") {
-                    // For system animation, use a name that identifies it as the original backup
                     val backupFileName = anim.path.trimStart('/').replace('/', '_')
                     "original_${backupFileName}.mp4"
                 } else if (anim.tag == "Community") {
-                    // For community animations, use a fixed name based on the filename
                     "${File(anim.path).name}.mp4"
                 } else {
                     val file = File(procPath)
@@ -192,11 +179,13 @@ fun HomeScreen(
                 val previewFile = File(previewDir, previewFileName)
 
                 if (!previewFile.exists()) {
+                    generatingPaths.add(anim.path)
                     val onComplete: (Boolean) -> Unit = { success ->
+                        generatingPaths.remove(anim.path)
                         scope.launch {
-                            val idx = animations.indexOfFirst { it.path == anim.path }
-                            if (idx != -1) {
-                                animations[idx] = animations[idx].copy(
+                            val currentIdx = animations.indexOfFirst { it.path == anim.path }
+                            if (currentIdx != -1) {
+                                animations[currentIdx] = animations[currentIdx].copy(
                                     previewUri = if (success) Uri.fromFile(previewFile) else null,
                                     generationFailed = !success
                                 )
@@ -211,12 +200,12 @@ fun HomeScreen(
                 }
 
                 withContext(Dispatchers.Main) {
-                    val idx = animations.indexOfFirst { it.path == anim.path }
-                    if (idx != -1) {
-                        animations[idx] = animations[idx].copy(
+                    val currentIdx = animations.indexOfFirst { it.path == anim.path }
+                    if (currentIdx != -1) {
+                        animations[currentIdx] = animations[currentIdx].copy(
                             resolution = desc?.let { "${it.width}x${it.height}" },
                             isNonStandard = desc?.isStandard == false,
-                            previewUri = if (previewFile.exists()) Uri.fromFile(previewFile) else animations[idx].previewUri
+                            previewUri = if (previewFile.exists()) Uri.fromFile(previewFile) else animations[currentIdx].previewUri
                         )
                     }
                 }
@@ -249,7 +238,6 @@ fun HomeScreen(
                         }
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -264,7 +252,7 @@ fun HomeScreen(
             scope.launch {
                 var importSuccess = false
                 var errorMessage = ""
-                
+
                 withContext(Dispatchers.IO) {
                     val tempFile = File(context.cacheDir, "import_check_${System.currentTimeMillis()}.zip")
                     try {
@@ -273,7 +261,7 @@ fun HomeScreen(
                                 input.copyTo(output)
                             }
                         }
-                        
+
                         // Validate the animation
                         val desc = BootAnimParser.parseDesc(tempFile)
                         if (desc == null) {
@@ -293,35 +281,31 @@ fun HomeScreen(
 
                         val targetFile = File(libraryDir, name)
                         tempFile.renameTo(targetFile)
-                        
+
                         // Save metadata for imported animation
                         context.getSharedPreferences("anim_metadata", android.content.Context.MODE_PRIVATE)
                             .edit()
                             .putString("${targetFile.name}_tag", "Imported")
                             .putString("${targetFile.name}_creator", "Unknown")
                             .apply()
-                            
+
                         importSuccess = true
                     } catch (e: Exception) {
                         errorMessage = "Import failed: ${e.message}"
                         tempFile.delete()
                     }
                 }
-                
+
                 if (importSuccess) {
-                    loadAnimations()
-                    Toast.makeText(context, "Animation imported successfully", Toast.LENGTH_SHORT).show()
+                    onRefreshRequest()
                 } else {
-                    Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
 
-    LaunchedEffect(currentPath, refreshTrigger) {
-        DiagnosticLogger.init(context)
-        withContext(Dispatchers.IO) { CommandExecutor.initRootSession() }
-        loadAnimations()
+    LaunchedEffect(animations.size, refreshTrigger) {
+        updateMetadata()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -342,14 +326,48 @@ fun HomeScreen(
                         fontWeight = FontWeight.Bold,
                     )
                 }
-                IconButton(onClick = onSettings) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = {
+                        val uniqueFolders = currentPaths.map { File(it).parent ?: "/" }.distinct()
+                        if (uniqueFolders.size > 1) {
+                            showPathSelectionDialog = true
+                        } else {
+                            val folderPath = uniqueFolders.firstOrNull() ?: "/"
+                            scope.launch(Dispatchers.IO) {
+                                CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d \"file://$folderPath\"", "Open File Explorer")
+                            }
+                        }
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Open Path")
+                    }
+                    IconButton(onClick = {
+                        val modulePath = "/data/adb/modules/BootStudio"
+                        scope.launch(Dispatchers.IO) {
+                            val result = CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d \"file://$modulePath\"", "Open Module Folder")
+                            if (result.startsWith("Error:")) {
+                                withContext(Dispatchers.Main) {
+                                }
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Default.Build, contentDescription = "Open Module")
+                    }
+                    IconButton(onClick = { showRebootConfirmDialog = true }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reboot")
+                    }
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
                 }
             }
 
-            if (animations.isEmpty()) {
+            if (isLoading && animations.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No animations found in assets/bootanimations/", color = Color.Gray)
+                    CircularProgressIndicator()
+                }
+            } else if (animations.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No animations found. Create one or import a ZIP to get started!", color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(32.dp))
                 }
             } else {
                 // Increase the viewport cache to keep off-screen items initialized and playing
@@ -370,6 +388,7 @@ fun HomeScreen(
                         AnimationCard(
                             animation = anim,
                             isApplied = isApplied,
+                            isApplying = applyingPath == anim.path,
                             onPlay = {
                                 if (anim.isAsset) {
                                     val file = File(context.cacheDir, anim.path.split("/").last())
@@ -388,30 +407,50 @@ fun HomeScreen(
                                 }
                             },
                             onApply = {
-                                if (!isApplied) {
+                                if (!isApplied && applyingPath == null) {
                                     scope.launch {
                                         val currentPrefs = context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
-                                        val currentPath = savedSystemPath ?: return@launch
+                                        val targetPaths = savedSystemPaths
 
-                                        if (anim.tag == "System") {
-                                            withContext(Dispatchers.IO) { MagiskManager.setDefaultAnimation(currentPath) }
-                                            appliedPath = "system_default"
-                                            currentPrefs.edit().putString("applied_anim_path", "system_default").apply()
-                                        } else {
-                                            val sourcePath = if (anim.isAsset) {
-                                                val file = File(context.cacheDir, anim.path.split("/").last())
-                                                withContext(Dispatchers.IO) {
-                                                    context.assets.open(anim.path).use { input ->
-                                                        file.outputStream().use { output -> input.copyTo(output) }
+                                        applyingPath = anim.path
+
+                                        try {
+                                            withContext(Dispatchers.IO) {
+                                                if (anim.tag == "System") {
+                                                    val result = ModuleManager.setDefaultAnimation(targetPaths)
+                                                    if (result.isNotEmpty() && (result.startsWith("Error:") || result.contains("failed", true) || result.contains("denied", true))) {
+                                                        throw Exception(result)
+                                                    }
+                                                } else {
+                                                    val sourcePath = if (anim.isAsset) {
+                                                        val file = File(context.cacheDir, anim.path.split("/").last())
+                                                        context.assets.open(anim.path).use { input ->
+                                                            file.outputStream().use { output -> input.copyTo(output) }
+                                                        }
+                                                        file.absolutePath
+                                                    } else {
+                                                        anim.path
+                                                    }
+                                                    val result = ModuleManager.changeBootAnimation(sourcePath, targetPaths)
+                                                    if (result.isNotEmpty() && (result.startsWith("Error:") || result.contains("failed", true) || result.contains("denied", true))) {
+                                                        throw Exception(result)
                                                     }
                                                 }
-                                                file.absolutePath
-                                            } else {
-                                                anim.path
                                             }
-                                            withContext(Dispatchers.IO) { MagiskManager.changeBootAnimation(sourcePath, currentPath) }
-                                            appliedPath = anim.path
-                                            currentPrefs.edit().putString("applied_anim_path", anim.path).apply()
+
+                                            // Update state on Main thread
+                                            if (anim.tag == "System") {
+                                                appliedPath = "system_default"
+                                                currentPrefs.edit().putString("applied_anim_path", "system_default").apply()
+                                            } else {
+                                                appliedPath = anim.path
+                                                currentPrefs.edit().putString("applied_anim_path", anim.path).apply()
+                                            }
+
+                                        } catch (e: Exception) {
+                                            DiagnosticLogger.log("ui", "Apply Error", e.message ?: "Unknown error")
+                                        } finally {
+                                            applyingPath = null
                                         }
                                     }
                                 }
@@ -429,7 +468,32 @@ fun HomeScreen(
             }
         }
 
-        // Dialogs for Management
+        if (showRebootConfirmDialog) {
+            AlertDialog(
+                onDismissRequest = { showRebootConfirmDialog = false },
+                title = { Text("Reboot Device") },
+                text = { Text("Are you sure you want to reboot your device?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showRebootConfirmDialog = false
+                            scope.launch(Dispatchers.IO) {
+                                CommandExecutor.executeWithSu("reboot", "Reboot")
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Reboot")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRebootConfirmDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
         if (showActionDialog != null) {
             val anim = showActionDialog!!
             AlertDialog(
@@ -485,14 +549,12 @@ fun HomeScreen(
                                     if (file.exists()) file.delete()
 
                                     if (filePath == appliedPath) {
-                                        savedSystemPath?.let { sysPath ->
-                                            MagiskManager.setDefaultAnimation(sysPath)
-                                            context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
-                                                .edit().putString("applied_anim_path", "system_default").apply()
-                                        }
+                                        ModuleManager.setDefaultAnimation(savedSystemPaths)
+                                        context.getSharedPreferences("bootstudio_prefs", android.content.Context.MODE_PRIVATE)
+                                            .edit().putString("applied_anim_path", "system_default").apply()
                                     }
                                 }
-                                loadAnimations()
+                                onRefreshRequest()
                             }
                             showDeleteConfirmDialog = null
                         },
@@ -535,7 +597,7 @@ fun HomeScreen(
                                     }
                                 }
                             }
-                            loadAnimations()
+                            onRefreshRequest()
                         }
                         showRenameDialog = null
                     }) { Text("Save") }
@@ -611,6 +673,38 @@ fun HomeScreen(
             BootAnimPlayer(playingAnim!!, onDismiss = { playingAnim = null })
         }
 
+        if (showPathSelectionDialog) {
+            val uniqueFolders = remember(currentPaths) {
+                currentPaths.map { File(it).parent ?: "/" }.distinct()
+            }
+            AlertDialog(
+                onDismissRequest = { showPathSelectionDialog = false },
+                title = { Text("Select Folder to Open") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        uniqueFolders.forEach { folderPath ->
+                            TextButton(
+                                onClick = {
+                                    showPathSelectionDialog = false
+                                    scope.launch(Dispatchers.IO) {
+                                        CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d \"file://$folderPath\"", "Open File Explorer")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(folderPath, textAlign = TextAlign.Start, modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showPathSelectionDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
         FloatingActionButton(
             onClick = { importLauncher.launch(arrayOf("application/zip")) },
             modifier = Modifier
@@ -632,7 +726,8 @@ fun AnimationCard(
     onPlay: () -> Unit,
     onApply: () -> Unit,
     onLongClick: () -> Unit,
-    onPreviewFailed: () -> Unit = {}
+    onPreviewFailed: () -> Unit = {},
+    isApplying: Boolean = false
 ) {
     Card(
         modifier = Modifier
@@ -662,15 +757,19 @@ fun AnimationCard(
                     .background(Color.Black)
                     .clickable { onPlay() }
             ) {
-                if (animation.previewUri != null && !animation.generationFailed) {
-                    VideoPreview(animation.previewUri, onLoadingFailed = onPreviewFailed)
-                } else if (animation.generationFailed) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.5f))
-                    }
-                } else {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                androidx.compose.animation.Crossfade(
+                    targetState = animation,
+                    label = "preview_fade"
+                ) { animState ->
+                    val uri = animState.previewUri
+                    when {
+                        uri != null && !animState.generationFailed -> VideoPreview(uri, onLoadingFailed = onPreviewFailed)
+                        animState.generationFailed -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White.copy(alpha = 0.5f))
+                        }
+                        else -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
                     }
                 }
             }
@@ -748,7 +847,18 @@ fun AnimationCard(
             }
 
             // 4. Circular Apply Button
-            if (isApplied) {
+            if (isApplying) {
+                Box(
+                    modifier = Modifier.size(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 3.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            } else if (isApplied) {
                 FilledIconButton(
                     onClick = onApply,
                     modifier = Modifier.size(48.dp),

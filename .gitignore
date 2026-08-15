@@ -25,3 +25,4 @@ fdroid-venv/
 repo/
 app/foss/
 app/release/
+.artifacts/

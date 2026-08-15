@@ -34,6 +34,7 @@ fun VideoPreview(uri: Uri, modifier: Modifier = Modifier.fillMaxSize(), onLoadin
 
         exoPlayer.addListener(listener)
         exoPlayer.setMediaItem(MediaItem.fromUri(uri))
+        exoPlayer.playWhenReady = true // Auto-play when ready
         exoPlayer.prepare()
 
         try {

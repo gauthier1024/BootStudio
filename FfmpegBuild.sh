@@ -113,7 +113,7 @@ echo "Configuring FFmpeg..."
 --enable-encoder=png,mpeg4,pcm_s16le \
 --enable-muxer=image2,wav,mp4,mov \
 --enable-protocol=file,pipe \
---enable-filter=scale,fps,pad,null,format || { tail -n 50 ffbuild/config.log; exit 1; }
+--enable-filter=scale,fps,pad,null,format,crop,setpts || { tail -n 50 ffbuild/config.log; exit 1; }
 
 # Normalize embedded configuration string (removes machine-specific absolute paths)
 sed -i 's/^#define FFMPEG_CONFIGURATION.*/#define FFMPEG_CONFIGURATION "reproducible-build"/' config.h

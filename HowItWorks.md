@@ -4,17 +4,18 @@ BootStudio modifies the Android boot animation by using a systemless approach. T
 
 ## Module Implementation
 
-The app manages a Magisk module located at `/data/adb/modules/BootStudio`. This module acts as a filesystem overlay. When the device boots, Magisk mounts the files in this directory over the corresponding system files.
+The app manages a module located at `/data/adb/modules/BootStudio`. Instead of using a traditional filesystem overlay (which can be inconsistent across different Android versions for boot animations), it uses dynamic bind mounts. When the device boots, it executes the `service.sh` script within the module to mount the custom animation over the target system paths.
 
 ### Module Initialization
 
 On the first run, the app sets up the module structure:
 
-1. Creates the directory tree at `/data/adb/modules/BootStudio/system`.
-2. Identifies the device's boot animation path (e.g., `/product/media/` or `/system/media/`).
-3. Backs up the factory `bootanimation.zip` into an `original/` folder within the module.
-4. Generates `module.prop` to identify the module to Magisk.
-5. Creates `auto_mount` and `disable` control files.
+1. Creates the base directory at `/data/adb/modules/BootStudio`.
+2. Identifies all potential boot animation paths (e.g., `/system/media/`, `/product/media/`, `/data/misc/bootanim/`).
+3. Backs up the original factory `bootanimation.zip` files into an `original/` folder.
+4. Generates `module.prop` to identify the module.
+5. Generates `service.sh`, which contains the logic to apply `mount --bind` for each detected path.
+6. Creates `action.sh` to allow users to open the app directly from the Magisk/KernelSU manager.
 
 ### Filesystem Structure
 
@@ -22,15 +23,11 @@ On the first run, the app sets up the module structure:
 BootStudio
 ├── auto_mount
 ├── module.prop
-├── disable
-├── original
-│   └── (Backup of original system files)
-└── system
-    ├── product
-    │   └── media
-    │       └── bootanimation.zip
-    └── data/misc/bootanim
-        └── bootanimation.zip
+├── service.sh      <-- Applies bind mounts at boot
+├── action.sh       <-- App shortcut
+├── bootanimation.zip <-- The active custom animation
+├── original/       <-- Backup of original system files
+└── disable         <-- Control file to disable the module
 ```
 
 ## Boot Animation Parsing

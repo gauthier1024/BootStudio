@@ -6,7 +6,7 @@ plugins {
 android {
     namespace = "com.bootstudio"
     compileSdk {
-        version = release(36) {
+        version = release(35) {
             minorApiLevel = 1
         }
     }
@@ -17,11 +17,11 @@ android {
         applicationId = "com.bootstudio"
         compileSdk = 35
         minSdk = 26
-        versionCode = 5
-        versionName = "1.1.1"
+        versionCode = 6
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        
+
         ndk {
             abiFilters.add("arm64-v8a")
         }

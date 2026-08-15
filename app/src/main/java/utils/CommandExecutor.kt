@@ -16,8 +16,8 @@ object CommandExecutor {
 
     /**
      * Initialise une session shell root persistante.
-     * À appeler au démarrage de l'application.
      */
+    @Synchronized
     fun initRootSession(): Boolean {
         return try {
             if (suProcess != null) {
@@ -29,8 +29,6 @@ object CommandExecutor {
             suReader = BufferedReader(InputStreamReader(suProcess!!.inputStream))
             suErrorReader = BufferedReader(InputStreamReader(suProcess!!.errorStream))
             
-            // Test simple pour vérifier que le shell est actif et root
-            // Use a direct write to avoid recursion with executeWithSu
             val writer = suWriter!!
             val reader = suReader!!
             val delimiter = "ROOT_CHECK_DONE"
@@ -56,6 +54,7 @@ object CommandExecutor {
         }
     }
 
+    @Synchronized
     fun closeRootSession() {
         try {
             suWriter?.write("exit\n")
@@ -71,6 +70,7 @@ object CommandExecutor {
         }
     }
 
+    @Synchronized
     fun executeWithSu(command: String, purpose: String = "Internal", onLine: ((String) -> Unit)? = null): String {
         if (suProcess == null || suWriter == null) {
             if (!initRootSession()) {
@@ -85,31 +85,49 @@ object CommandExecutor {
             
             val delimiter = "END_OF_COMMAND_${System.currentTimeMillis()}"
             
-            writer.write("$command\n")
+            // Redirect stderr to stdout
+            writer.write("($command) 2>&1\n")
             writer.write("echo $delimiter\n")
             writer.flush()
 
             val output = StringBuilder()
-            var line: String?
+            val lineBuilder = StringBuilder()
             
-            // This loop ensures we don't get stuck if FFmpeg takes a long time
             while (true) {
-                line = reader.readLine()
-                if (line == null || line == delimiter) break
+                val c = reader.read()
+                if (c == -1) break
                 
-                output.append(line).append("\n")
-                onLine?.invoke(line)
-                
-                // If it's an ffmpeg command, log the progress periodically
-                if (purpose == "ffmpeg" && line.contains("frame=")) {
-                    Log.d("FFmpeg-Progress", line)
+                val char = c.toChar()
+                if (char == '\n' || char == '\r') {
+                    val line = lineBuilder.toString()
+                    lineBuilder.clear()
+                    
+                    if (line.contains(delimiter)) {
+                        val partBefore = line.substringBefore(delimiter).trim()
+                        if (partBefore.isNotEmpty()) {
+                            output.append(partBefore).append("\n")
+                            onLine?.invoke(partBefore)
+                        }
+                        break
+                    }
+                    
+                    if (line.isNotBlank()) {
+                        output.append(line).append("\n")
+                        onLine?.invoke(line)
+                    }
+                } else {
+                    lineBuilder.append(char)
                 }
             }
             
-            output.toString().trim()
+            val result = output.toString().trim()
+            if (result.isNotEmpty()) {
+                DiagnosticLogger.log("shell", "Output", result)
+            }
+            result
         } catch (e: Exception) {
             DiagnosticLogger.log("shell", "$purpose Error", e.message ?: "Unknown error")
-            closeRootSession() // On ferme en cas d'erreur pour réinitialiser plus tard
+            closeRootSession()
             "Error: ${e.message}"
         }
     }
@@ -127,4 +145,5 @@ object CommandExecutor {
             "su Error: ${e.message}"
         }
     }
+
 }

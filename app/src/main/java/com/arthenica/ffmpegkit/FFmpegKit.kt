@@ -59,8 +59,8 @@ object FFmpegKit {
             return FFmpegSession(-1, "FFmpeg not initialized")
         }
 
-        // Use 'export' to ensure LD_LIBRARY_PATH is set for the entire shell session
-        val fullCommand = "export LD_LIBRARY_PATH='$libDir' && '$binaryPath' $command 2>&1"
+        // Append exit code detection to the shell command
+        val fullCommand = "export LD_LIBRARY_PATH='$libDir' && '$binaryPath' $command 2>&1; echo \"EXIT_CODE:$?\""
         
         Log.d("FFmpegKit-Binary", "Executing: $fullCommand")
 
@@ -68,8 +68,11 @@ object FFmpegKit {
             val output = CommandExecutor.executeWithSu(fullCommand, purpose = "ffmpeg", onLine = onLine)
             Log.d("FFmpegKit-Binary", "FFmpeg Result: $output")
             
-            if (output.contains("CANNOT LINK") || output.contains("not found")) {
-                 FFmpegSession(-1, output)
+            val exitCodeMatch = Regex("EXIT_CODE:(\\d+)").find(output)
+            val exitCode = exitCodeMatch?.groupValues?.get(1)?.toInt() ?: -1
+            
+            if (exitCode != 0 || output.contains("CANNOT LINK") || output.contains("not found")) {
+                 FFmpegSession(if (exitCode == 0) -1 else exitCode, output)
             } else {
                  FFmpegSession(0, output)
             }
@@ -81,6 +84,29 @@ object FFmpegKit {
 
     fun executeAsync(command: String, callback: (FFmpegSession) -> Unit) {
         Thread { callback(execute(command)) }.start()
+    }
+
+    /**
+     * Executes FFmpeg in a background process without blocking the persistent root shell.
+     * Ideal for non-critical background tasks like preview generation.
+     */
+    fun executeBackground(command: String): FFmpegSession {
+        if (binaryPath == null || libDir == null) {
+            return FFmpegSession(-1, "FFmpeg not initialized")
+        }
+        val fullCommand = "export LD_LIBRARY_PATH='$libDir' && '$binaryPath' $command"
+        Log.d("FFmpegKit-Binary", "Executing Background: $fullCommand")
+        return try {
+            val process = ProcessBuilder("su", "-c", fullCommand).start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val error = process.errorStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            val rc = process.exitValue()
+            if (rc == 0) FFmpegSession(0, output) else FFmpegSession(rc, error)
+        } catch (e: Exception) {
+            Log.e("FFmpegKit-Binary", "Background execution crash: ${e.message}")
+            FFmpegSession(-1, e.message ?: "Unknown error")
+        }
     }
     
     fun getVersion(): String = "Local FFmpeg Binary"

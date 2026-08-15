@@ -387,7 +387,7 @@ fun FancyStepItem(
                     )
                 }
             }
-            
+
             if (isActive && totalFrames > 0) {
                 Spacer(modifier = Modifier.height(10.dp))
                 LinearProgressIndicator(
@@ -400,9 +400,9 @@ fun FancyStepItem(
                     trackColor = activeColor.copy(alpha = 0.1f)
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -414,14 +414,14 @@ fun FancyStepItem(
                     isActive = isActive,
                     icon = if (part.type == 'c') Icons.Default.Check else null
                 )
-                
+
                 InfoTag(
                     text = if (part.loop == 0) "∞" else "x${part.loop}",
                     color = MaterialTheme.colorScheme.secondary,
                     isActive = isActive,
                     icon = Icons.Default.PlayArrow
                 )
-                
+
                 if (part.pause > 0) {
                     InfoTag(
                         text = "${part.pause}f",
@@ -430,7 +430,7 @@ fun FancyStepItem(
                         icon = Icons.Default.Info
                     )
                 }
-                
+
                 if (hasAudio) {
                     InfoTag(
                         text = "AUDIO",
@@ -539,7 +539,7 @@ private suspend fun playAnimation(
                             audioByPart[partIndex] = audioFile
                         }
                     } else if (fileName.endsWith(".png") || fileName.endsWith(".jpg") ||
-                               fileName.endsWith(".jpeg") || fileName.endsWith(".webp")) {
+                        fileName.endsWith(".jpeg") || fileName.endsWith(".webp")) {
                         val partIndex = folderToPartMap[parentFolder]
                         if (partIndex != null) {
                             val frameFile = File(tempDir, "p${partIndex}_$fileName")
@@ -597,7 +597,7 @@ private suspend fun playAnimation(
                                 decoderJob.cancel()
                                 return@repeat
                             }
-                            
+
                             onFrameIndexUpdate(i)
 
                             val bitmap = frameChannel.receive()

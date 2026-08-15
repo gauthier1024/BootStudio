@@ -1,6 +1,6 @@
 # BootStudio
 
-BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly, using Magisk.
+BootStudio is an Android application for managing and customizing boot animations on rooted devices. It provides a systemless interface to change boot sequences without modifying the system partition directly.
 
 <details>
 <summary><strong>📷 Click to see screenshots</strong></summary>
@@ -21,14 +21,14 @@ BootStudio is an Android application for managing and customizing boot animation
 - **Custom Creation:** Package your own animation files into the correct format.
 - **Import/Export:** Backup your current animation or import external .zip files.
 - **Community Store:** Browse and download animations shared by other users.
-- **Systemless Application:** All changes are applied via a Magisk module to keep your device's system partition intact.
+- **Systemless Application:** All changes are applied via a module to keep your device's system partition intact.
 - **Live Preview:** View animations within the app before applying them to your device.
 
 ## Supported
 
 - ✅ Magisk
-- ❌ KernelSU/KernelSuNext
-- ❌ Apatch
+- ✅ KernelSU/KernelSuNext
+- ✅ Apatch
 - ❌ Samsung devices
 
 ## Add your animations to the store
@@ -44,14 +44,9 @@ To contribute an animation to the community store, follow these steps:
     - You can use the `tools/preview.py` script to create the preview from your zip file.
 7. Submit a Pull Request with your changes.
 
-## Requirements
-
-- A rooted Android device.
-- Magisk installed.
-
 ## How it works
 
-BootStudio uses a Magisk module to overlay your custom animation on top of the system's default files. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
+BootStudio uses a module to dynamically bind-mount your custom animation to the system's default paths. This is handled by a `service.sh` script within the module, ensuring the change is applied systemlessly without modifying the system partition. For a detailed technical breakdown of the module structure and the preview engine, read [HowItWorks.md](HowItWorks.md).
 
 ## License
 

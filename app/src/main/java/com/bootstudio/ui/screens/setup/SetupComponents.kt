@@ -12,11 +12,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,7 +80,7 @@ fun PermissionStep(
             )
             RequirementItem(
                 icon = Icons.Rounded.Build,
-                title = "Magisk Module Generator",
+                title = "Module Generator",
                 description = "Safely overlays system files without permanent changes."
             )
         }
@@ -96,9 +93,7 @@ fun PermissionStep(
                 .fillMaxWidth()
                 .height(64.dp),
             shape = RoundedCornerShape(20.dp),
-            elevation = ButtonDefaults.buttonColors().containerColor.let { 
-                ButtonDefaults.elevatedButtonElevation(defaultElevation = 8.dp)
-            }
+            elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 8.dp)
         ) {
             Icon(Icons.Rounded.Check, contentDescription = null)
             Spacer(Modifier.width(12.dp))
@@ -131,6 +126,53 @@ fun PermissionStep(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ReadyToScanStep(onStartScan: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                            Color.Transparent
+                        )
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = null,
+                modifier = Modifier.size(80.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Text(
+            text = "Ready to Scan",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.ExtraBold
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "We will now scan your device to locate your bootanimation files.",
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(48.dp))
+        Button(
+            onClick = onStartScan,
+            modifier = Modifier.fillMaxWidth().height(64.dp),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Text("Start System Scan", fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
     }
 }
@@ -279,20 +321,20 @@ fun SearchingStep(
 @Composable
 fun SelectPathStep(
     foundPaths: List<String>,
-    selectedPath: String?,
-    onPathSelect: (String) -> Unit,
+    selectedPaths: List<String>,
+    onPathToggle: (String) -> Unit,
     onContinueClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = if (foundPaths.size == 1) "Active Path Found" else "Select Animation Path",
+            text = "Select Animation Paths",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.ExtraBold,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Verify the system location where your boot animation is stored.",
+            text = "Select all system locations where you want to apply boot animations.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -302,7 +344,7 @@ fun SelectPathStep(
         Box(modifier = Modifier.weight(1f, fill = false).heightIn(max = 400.dp).fillMaxWidth()) {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(foundPaths) { path ->
-                    val isSelected = path == selectedPath
+                    val isSelected = selectedPaths.contains(path)
                     val backgroundColor by animateColorAsState(
                         targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                         label = "card_bg"
@@ -313,7 +355,7 @@ fun SelectPathStep(
                     )
 
                     Surface(
-                        onClick = { onPathSelect(path) },
+                        onClick = { onPathToggle(path) },
                         shape = RoundedCornerShape(20.dp),
                         color = backgroundColor,
                         border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderColor),
@@ -324,35 +366,53 @@ fun SelectPathStep(
                             modifier = Modifier.padding(20.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
-                                    .padding(2.dp)
-                                    .clip(CircleShape)
-                                    .background(backgroundColor),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isSelected) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(12.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary)
-                                    )
-                                }
-                            }
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { onPathToggle(path) },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedColor = MaterialTheme.colorScheme.outline
+                                )
+                            )
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(
                                 text = path,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
                                 color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                fontFamily = FontFamily.Monospace
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
+                }
+            }
+        }
+
+        if (selectedPaths.size < foundPaths.size && selectedPaths.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = "Some bootanimation paths are not selected. The custom animation might not work on your device.",
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -361,7 +421,7 @@ fun SelectPathStep(
         Button(
             onClick = onContinueClick,
             modifier = Modifier.fillMaxWidth().height(64.dp),
-            enabled = selectedPath != null,
+            enabled = selectedPaths.isNotEmpty(),
             shape = RoundedCornerShape(20.dp)
         ) {
             Text("Confirm and Continue", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -371,7 +431,7 @@ fun SelectPathStep(
 
 @Composable
 fun DoneStep(
-    selectedPath: String?,
+    selectedPaths: List<String>,
     onFinishClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -405,24 +465,33 @@ fun DoneStep(
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Active path identified and verified:",
+            text = "${selectedPaths.size} paths identified and verified:",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Surface(
-            modifier = Modifier.padding(vertical = 16.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-            shape = RoundedCornerShape(12.dp)
+        
+        LazyColumn(
+            modifier = Modifier.padding(vertical = 16.dp).heightIn(max = 120.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = selectedPath ?: "Unknown",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.ExtraBold,
-                fontFamily = FontFamily.Monospace
-            )
+            items(selectedPaths) { path ->
+                Surface(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = path,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
         }
+
         Spacer(modifier = Modifier.height(48.dp))
         Button(
             onClick = onFinishClick,

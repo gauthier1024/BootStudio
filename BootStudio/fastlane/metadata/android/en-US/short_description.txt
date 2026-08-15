@@ -1,1 +1,0 @@
-Manage and create boot animations on rooted devices with Magisk.

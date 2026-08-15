@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -94,7 +93,6 @@ fun CommunityScreen() {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     isLoading = false
-                    Toast.makeText(context, "Failed to load community animations", Toast.LENGTH_SHORT).show()
                 }
             }
         }
