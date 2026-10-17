@@ -83,7 +83,8 @@ object CommandExecutor {
             val writer = suWriter!!
             val reader = suReader!!
             
-            val delimiter = "END_OF_COMMAND_${System.currentTimeMillis()}"
+            // Unpredictable marker so command output cannot fake the end of a command
+            val delimiter = "END_OF_COMMAND_${java.util.UUID.randomUUID().toString().replace("-", "")}"
             
             // Redirect stderr to stdout
             writer.write("($command) 2>&1\n")

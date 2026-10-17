@@ -40,6 +40,12 @@ import java.net.URL
 // Simple in-memory cache for the animations list
 private var cachedAnimations by mutableStateOf<List<CommunityAnimation>>(emptyList())
 
+/** Rejects titles that could escape the expected URL folder or contain control characters. */
+internal fun isValidCommunityTitle(title: String): Boolean =
+    title.isNotBlank() && title.length <= 100 &&
+        title.none { it.isISOControl() || it == '/' || it == '\\' || it == '?' || it == '#' || it == '%' } &&
+        title != "." && title != ".."
+
 data class CommunityAnimation(
     val title: String,
     val creator: String,
@@ -75,6 +81,8 @@ fun CommunityScreen() {
                     val item = jsonArray.getJSONObject(i)
                     val title = item.getString("title")
                     val creator = item.getString("creator")
+                    // The list is remote data: titles become URL segments and file names.
+                    if (!isValidCommunityTitle(title)) continue
                     list.add(
                         CommunityAnimation(
                             title = title,
@@ -184,12 +192,12 @@ fun CommunityAnimationCard(
     val context = LocalContext.current
     val isDownloading = downloadProgress != null
     val isDownloaded = remember(animation.title, isDownloading) {
-        File(context.filesDir, "library/${animation.title}.zip").exists()
+        File(context.filesDir, "library/${utils.FileNames.sanitize(animation.title, "animation")}.zip").exists()
     }
 
     // Preview caching logic
     val previewCacheDir = File(context.cacheDir, "community_previews").apply { if (!exists()) mkdirs() }
-    val localPreviewFile = File(previewCacheDir, "${animation.title}.mp4")
+    val localPreviewFile = File(previewCacheDir, "${utils.FileNames.sanitize(animation.title, "animation")}.mp4")
     var previewUri by remember { mutableStateOf(if (localPreviewFile.exists()) Uri.fromFile(localPreviewFile) else Uri.parse(animation.previewUrl)) }
     var isPreviewDownloading by remember { mutableStateOf(!localPreviewFile.exists()) }
 

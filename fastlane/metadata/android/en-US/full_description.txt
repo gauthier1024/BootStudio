@@ -5,5 +5,12 @@ Features:
 - Custom Creation: Package your own animation files into the correct format.
 - Import/Export: Backup your current animation or import external .zip files.
 - Community Store: Browse and download animations shared by other users.
-- Systemless Application: All changes are applied via a Magisk module to keep your device's system partition intact.
+- Systemless Application: All changes are applied via a module (Magisk, KernelSU / KernelSU Next or APatch) to keep your device's system partition intact.
 - Live Preview: View animations within the app before applying them to your device.
+
+Requirements:
+- A rooted Android device with Magisk, KernelSU / KernelSU Next or APatch installed.
+- Samsung devices are not supported.
+
+Recovery:
+BootStudio bind-mounts the chosen animation over the system boot animation at boot. If an animation is broken or the boot looks wrong, the change is easy to undo: disable or remove the "BootStudio" module in your root manager (Magisk, KernelSU or APatch) and reboot, or boot into the root manager's safe mode. You can also select "System Animation" in the app to go back to the original.

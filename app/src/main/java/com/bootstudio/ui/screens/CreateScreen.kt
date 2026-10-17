@@ -149,7 +149,7 @@ fun CreateScreen(onSuccess: () -> Unit = {}) {
                             tempGif.outputStream().use { output -> input.copyTo(output) }
                         }
 
-                        val session = FFmpegKit.execute("-i '${tempGif.absolutePath}'")
+                        val session = FFmpegKit.execute(listOf("-i", tempGif.absolutePath))
                         val output = session.allLogsAsString
                         DiagnosticLogger.log("ffmpeg", "gif probe output", output)
 
@@ -259,7 +259,7 @@ fun CreateScreen(onSuccess: () -> Unit = {}) {
                                 }
                                 val outFrame = File(estDir, "frame.png")
                                 // Use -vframes 1 for instant extraction of the first frame
-                                FFmpegKit.execute("-y -i '${tempGif.absolutePath}' -vframes 1 '${outFrame.absolutePath}'")
+                                FFmpegKit.execute(listOf("-y", "-i", tempGif.absolutePath, "-vframes", "1", outFrame.absolutePath))
                                 if (outFrame.exists()) {
                                     finalAvgSize = (outFrame.length() * 1.15).toLong()
                                 }
@@ -994,12 +994,18 @@ private suspend fun generateBootAnimation(
 
             // 2. FFmpeg Command to resize and extract frames
             // -vf scale=w:h,fps=fps
-            val scaleFilter = if (width.isNotEmpty() && height.isNotEmpty()) "scale=$width:$height," else ""
-            val videoFps = if (fps.isNotEmpty()) fps else "30"
+            val safeWidth = sanitizeDimension(width)
+            val safeHeight = sanitizeDimension(height)
+            val scaleFilter = if (safeWidth != null && safeHeight != null) "scale=$safeWidth:$safeHeight," else ""
+            val videoFps = sanitizeFps(fps)
             val totalFrames = ((totalDuration / 1000.0) * videoFps.toDouble()).toInt().coerceAtLeast(1)
 
-            val extractCommand = "-y -nostdin -i \"${sourceFile.absolutePath}\" -vf \"${scaleFilter}fps=$videoFps\" \"${part0Dir.absolutePath}/%05d.png\""
-            DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
+            val extractCommand = listOf(
+                "-y", "-nostdin", "-i", sourceFile.absolutePath,
+                "-vf", "${scaleFilter}fps=$videoFps",
+                "${part0Dir.absolutePath}/%05d.png"
+            )
+            DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand.joinToString(" "))
 
             val session = FFmpegKit.execute(extractCommand) { line ->
                 if (line.contains("frame=")) {
@@ -1022,7 +1028,7 @@ private suspend fun generateBootAnimation(
             onProgress("Generating metadata...", 0.7f)
             // 3. Create desc.txt
             val descFile = File(workDir, "desc.txt")
-            val descContent = "${width.ifEmpty { "1080" }} ${height.ifEmpty { "2400" }} $videoFps\np 0 0 part0\n"
+            val descContent = "${safeWidth ?: "1080"} ${safeHeight ?: "2400"} $videoFps\np 0 0 part0\n"
             descFile.writeText(descContent)
 
             onProgress("Zipping animation...", 0.9f)
@@ -1074,9 +1080,9 @@ private suspend fun generateAdvancedBootAnimation(
             if (workDir.exists()) workDir.deleteRecursively()
             workDir.mkdirs()
 
-            val videoFps = if (fps.isNotEmpty()) fps else "30"
-            val targetWidth = if (width.isNotEmpty()) width else "1080"
-            val targetHeight = if (height.isNotEmpty()) height else "2400"
+            val videoFps = sanitizeFps(fps)
+            val targetWidth = sanitizeDimension(width) ?: "1080"
+            val targetHeight = sanitizeDimension(height) ?: "2400"
 
             val descContent = StringBuilder()
             descContent.append("$targetWidth $targetHeight $videoFps\n")
@@ -1084,9 +1090,11 @@ private suspend fun generateAdvancedBootAnimation(
             parts.forEachIndexed { index, part ->
                 if (part.uri == null) return@forEachIndexed
 
-                onProgress("Processing ${part.folder}...", (index.toFloat() / parts.size) * 0.8f)
+                // Folder names end up in a path and in desc.txt: keep them to a plain, safe charset.
+                val folder = sanitizeFolder(part.folder, index)
+                onProgress("Processing $folder...", (index.toFloat() / parts.size) * 0.8f)
 
-                val partDir = File(workDir, part.folder)
+                val partDir = File(workDir, folder)
                 partDir.mkdirs()
 
                 val sourceFile = File(workDir, "temp_source_$index")
@@ -1114,8 +1122,12 @@ private suspend fun generateAdvancedBootAnimation(
                 val totalPartFrames = ((partDuration / 1000.0) * videoFps.toDouble()).toInt().coerceAtLeast(1)
 
                 val scaleFilter = "scale=$targetWidth:$targetHeight"
-                val extractCommand = "-y -nostdin -i \"${sourceFile.absolutePath}\" -vf \"${scaleFilter},fps=$videoFps\" \"${partDir.absolutePath}/%05d.png\""
-                DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand)
+                val extractCommand = listOf(
+                    "-y", "-nostdin", "-i", sourceFile.absolutePath,
+                    "-vf", "${scaleFilter},fps=$videoFps",
+                    "${partDir.absolutePath}/%05d.png"
+                )
+                DiagnosticLogger.log("ffmpeg", "creating bootanim", extractCommand.joinToString(" "))
 
                 val session = FFmpegKit.execute(extractCommand) { line ->
                     if (line.contains("frame=")) {
@@ -1125,7 +1137,7 @@ private suspend fun generateAdvancedBootAnimation(
                             val baseProgress = (index.toFloat() / parts.size) * 0.8f
                             val currentPartWeight = (1.0f / parts.size) * 0.8f
                             val finalProgress = baseProgress + (partProgress * currentPartWeight)
-                            val status = "Processing ${part.folder} ($frame/$totalPartFrames)..."
+                            val status = "Processing $folder ($frame/$totalPartFrames)..."
                             onProgress(status, finalProgress)
                         }
                     }
@@ -1138,9 +1150,9 @@ private suspend fun generateAdvancedBootAnimation(
                 }
 
                 val type = part.type.lowercase()
-                val repeats = if (part.repeats.isEmpty()) "0" else part.repeats
-                val delay = if (part.delay.isEmpty()) "0" else part.delay
-                descContent.append("$type $repeats $delay ${part.folder}\n")
+                val repeats = sanitizeCount(part.repeats)
+                val delay = sanitizeCount(part.delay)
+                descContent.append("$type $repeats $delay $folder\n")
 
                 // Handle Audio
                 part.audioUri?.let { audioUri ->
@@ -1156,8 +1168,8 @@ private suspend fun generateAdvancedBootAnimation(
                         audioSourceFile.copyTo(audioTargetFile, overwrite = true)
                     } else {
                         // Use ffmpeg to convert to wav
-                        val convertCommand = "-y -i '${audioSourceFile.absolutePath}' '${audioTargetFile.absolutePath}'"
-                        DiagnosticLogger.log("ffmpeg", "converting audio", convertCommand)
+                        val convertCommand = listOf("-y", "-i", audioSourceFile.absolutePath, audioTargetFile.absolutePath)
+                        DiagnosticLogger.log("ffmpeg", "converting audio", convertCommand.joinToString(" "))
                         FFmpegKit.execute(convertCommand)
                     }
                 }
@@ -1352,3 +1364,21 @@ data class AnimationPartState(
     val sourceSize: Long = 0L,
     val avgFrameSize: Long = 0L
 )
+
+// --- Input sanitising: these values reach FFmpeg arguments, file paths and desc.txt ---
+
+/** Positive integer in a sane range, or null when empty/invalid. */
+private fun sanitizeDimension(raw: String): String? =
+    raw.trim().toIntOrNull()?.takeIf { it in 1..16384 }?.toString()
+
+private fun sanitizeFps(raw: String): String =
+    raw.trim().toIntOrNull()?.coerceIn(1, 240)?.toString() ?: "30"
+
+private fun sanitizeCount(raw: String): String =
+    raw.trim().toIntOrNull()?.coerceIn(0, 100000)?.toString() ?: "0"
+
+/** Part folder names: letters, digits, '_' and '-' only (no separators, no dots, no spaces). */
+private fun sanitizeFolder(raw: String, index: Int): String =
+    raw.filter { it.isLetterOrDigit() && it.code < 128 || it == '_' || it == '-' }
+        .take(32)
+        .ifEmpty { "part$index" }

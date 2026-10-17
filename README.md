@@ -31,6 +31,16 @@ BootStudio is an Android application for managing and customizing boot animation
 - ✅ Apatch
 - ❌ Samsung devices
 
+## Recovery
+
+If an animation is broken or the boot looks wrong, the change is easy to undo because nothing in the system partition is modified:
+
+- Disable or remove the **BootStudio** module in your root manager (Magisk, KernelSU / KernelSU Next or APatch) and reboot, or
+- boot into your root manager's **safe mode** (modules are not loaded), or
+- delete `/data/adb/modules/BootStudio` from a recovery or `adb shell` and reboot.
+
+From inside the app, selecting **System Animation** restores the original one.
+
 ## Add your animations to the store
 
 To contribute an animation to the community store, follow these steps:

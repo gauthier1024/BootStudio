@@ -50,7 +50,10 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         val prefs = getSharedPreferences("bootstudio_prefs", MODE_PRIVATE)
-        val initialPaths = prefs.getStringSet("boot_anim_paths", null)?.toList()
+        // Paths are re-validated: they end up in a script run as root at every boot.
+        val initialPaths = prefs.getStringSet("boot_anim_paths", null)
+            ?.filter { utils.ShellUtils.isSafeSystemPath(it) }
+            ?.takeIf { it.isNotEmpty() }
 
         enableEdgeToEdge()
         setContent {
@@ -179,13 +182,11 @@ class MainActivity : ComponentActivity() {
                     val libraryDir = File(filesDir, "library")
                     if (!libraryDir.exists()) libraryDir.mkdirs()
 
-                    val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                        val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                        cursor.moveToFirst()
-                        cursor.getString(nameIndex)
-                    } ?: "imported_${System.currentTimeMillis()}.zip"
-
-                    val targetFile = File(libraryDir, name)
+                    // The display name is chosen by the sending app: never use it as a path.
+                    val targetFile = utils.FileNames.libraryFile(
+                        libraryDir,
+                        utils.FileNames.queryDisplayName(contentResolver, uri)
+                    )
                     tempFile.renameTo(targetFile)
 
                     getSharedPreferences("anim_metadata", MODE_PRIVATE)
@@ -244,13 +245,13 @@ fun MainScreen(
                                 else -> {
                                     val firstFile = CommandExecutor.executeWithSu("ls \"$originalDir\" | head -n 1").trim()
                                     if (firstFile.isNotEmpty() && !firstFile.startsWith("Error:")) {
-                                        "$originalDir/$firstFile"
+                                        "$originalDir/${firstFile.substringAfterLast('/')}"
                                     } else {
                                         systemPath
                                     }
                                 }
                             }
-                            CommandExecutor.executeWithSu("cp \"$source\" \"${target.absolutePath}\" && chmod 644 \"${target.absolutePath}\"")
+                            CommandExecutor.executeWithSu("cp ${utils.ShellUtils.quote(source)} ${utils.ShellUtils.quote(target.absolutePath)} && chmod 644 ${utils.ShellUtils.quote(target.absolutePath)}")
                         }
                     }
                     

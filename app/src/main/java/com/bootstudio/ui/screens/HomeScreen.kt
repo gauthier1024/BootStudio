@@ -114,7 +114,7 @@ fun HomeScreen(
             withContext(Dispatchers.IO) {
                 val target = File(context.cacheDir, "system_backup.zip")
                 if (!target.exists()) {
-                    CommandExecutor.executeWithSu("cp \"$sourcePath\" \"${target.absolutePath}\" && chmod 644 \"${target.absolutePath}\"", purpose = "Copy system bootanim")
+                    CommandExecutor.executeWithSu("cp ${utils.ShellUtils.quote(sourcePath)} ${utils.ShellUtils.quote(target.absolutePath)} && chmod 644 ${utils.ShellUtils.quote(target.absolutePath)}", purpose = "Copy system bootanim")
                 }
                 if (target.exists()) target.absolutePath else null
             }
@@ -137,7 +137,7 @@ fun HomeScreen(
                 } else {
                     val firstFile = CommandExecutor.executeWithSu("ls \"$originalDir\" | head -n 1").trim()
                     if (firstFile.isNotEmpty() && !firstFile.startsWith("Error:")) {
-                        "$originalDir/$firstFile"
+                        "$originalDir/${firstFile.substringAfterLast('/')}"
                     } else {
                         systemPath
                     }
@@ -273,13 +273,11 @@ fun HomeScreen(
                         val libraryDir = File(context.filesDir, "library")
                         if (!libraryDir.exists()) libraryDir.mkdirs()
 
-                        val name = context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
-                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                            cursor.moveToFirst()
-                            cursor.getString(nameIndex)
-                        } ?: "imported_${System.currentTimeMillis()}.zip"
-
-                        val targetFile = File(libraryDir, name)
+                        // The display name is chosen by the provider app: never use it as a path.
+                        val targetFile = utils.FileNames.libraryFile(
+                            libraryDir,
+                            utils.FileNames.queryDisplayName(context.contentResolver, it)
+                        )
                         tempFile.renameTo(targetFile)
 
                         // Save metadata for imported animation
@@ -334,7 +332,7 @@ fun HomeScreen(
                         } else {
                             val folderPath = uniqueFolders.firstOrNull() ?: "/"
                             scope.launch(Dispatchers.IO) {
-                                CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d \"file://$folderPath\"", "Open File Explorer")
+                                CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d ${utils.ShellUtils.quote("file://$folderPath")}", "Open File Explorer")
                             }
                         }
                     }) {
@@ -343,7 +341,7 @@ fun HomeScreen(
                     IconButton(onClick = {
                         val modulePath = "/data/adb/modules/BootStudio"
                         scope.launch(Dispatchers.IO) {
-                            val result = CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d \"file://$modulePath\"", "Open Module Folder")
+                            val result = CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d ${utils.ShellUtils.quote("file://$modulePath")}", "Open Module Folder")
                             if (result.startsWith("Error:")) {
                                 withContext(Dispatchers.Main) {
                                 }
@@ -586,8 +584,11 @@ fun HomeScreen(
                         scope.launch {
                             withContext(Dispatchers.IO) {
                                 val oldFile = File(oldPath)
-                                if (oldFile.exists()) {
-                                    val newFile = File(oldFile.parent, "$newName.zip")
+                                // Only a plain file name is accepted; it must stay in the same directory.
+                                val newFile = oldFile.parentFile?.let { dir ->
+                                    utils.FileNames.resolveChild(dir, utils.FileNames.zipFileName(newName, oldFile.nameWithoutExtension))
+                                }
+                                if (oldFile.exists() && newFile != null && !newFile.exists()) {
                                     val newPath = newFile.absolutePath
                                     if (oldFile.renameTo(newFile)) {
                                         if (oldPath == appliedPath) {
@@ -687,7 +688,7 @@ fun HomeScreen(
                                 onClick = {
                                     showPathSelectionDialog = false
                                     scope.launch(Dispatchers.IO) {
-                                        CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d \"file://$folderPath\"", "Open File Explorer")
+                                        CommandExecutor.executeWithSu("am start -a android.intent.action.VIEW -d ${utils.ShellUtils.quote("file://$folderPath")}", "Open File Explorer")
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth()

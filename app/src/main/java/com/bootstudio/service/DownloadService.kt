@@ -27,6 +27,18 @@ class DownloadService : Service() {
         private val _downloadingItems = MutableStateFlow<Map<String, Int>>(emptyMap())
         val downloadingItems = _downloadingItems.asStateFlow()
 
+        private const val MAX_ZIP_BYTES = 200L * 1024 * 1024
+        private const val ALLOWED_HOST = "raw.githubusercontent.com"
+
+        /** Only https downloads from the community repository host are allowed. */
+        private fun isAllowedUrl(url: String): Boolean =
+            try {
+                val u = URL(url)
+                u.protocol == "https" && u.host == ALLOWED_HOST
+            } catch (_: Exception) {
+                false
+            }
+
         const val ACTION_START_DOWNLOAD = "com.bootstudio.ACTION_START_DOWNLOAD"
         const val EXTRA_ANIM_TITLE = "extra_anim_title"
         const val EXTRA_ANIM_CREATOR = "extra_anim_creator"
@@ -71,11 +83,24 @@ class DownloadService : Service() {
             var success = false
             val libraryDir = File(filesDir, "library")
             if (!libraryDir.exists()) libraryDir.mkdirs()
-            val targetFile = File(libraryDir, "${anim.title}.zip")
+            // Remote title -> plain file name that is guaranteed to stay inside the library directory.
+            val safeTitle = utils.FileNames.sanitize(anim.title, "animation")
+            val targetFile = utils.FileNames.resolveChild(libraryDir, "$safeTitle.zip")
+                ?: File(libraryDir, "animation_${System.currentTimeMillis()}.zip")
 
             val previewDir = File(cacheDir, "previews")
             if (!previewDir.exists()) previewDir.mkdirs()
             val targetPreviewFile = File(previewDir, "${targetFile.name}.mp4")
+
+            if (!isAllowedUrl(anim.downloadUrl) || !isAllowedUrl(anim.previewUrl)) {
+                _downloadingItems.update { it - anim.title }
+                activeDownloads.remove(anim.title)
+                if (activeDownloads.isEmpty()) {
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                    stopSelf()
+                }
+                return@launch
+            }
 
             try {
                 // Download Zip
@@ -94,6 +119,7 @@ class DownloadService : Service() {
                             while (input.read(buffer).also { count = it } != -1) {
                                 ensureActive()
                                 total += count
+                                if (total > MAX_ZIP_BYTES) throw java.io.IOException("File too large")
                                 output.write(buffer, 0, count)
                                 if (fileLength > 0) {
                                     val progress = ((total * 100) / fileLength).toInt()

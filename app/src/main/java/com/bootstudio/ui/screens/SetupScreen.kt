@@ -79,7 +79,8 @@ fun SetupScreen(onSetupComplete: (List<String>, List<String>) -> Unit) {
 
             val result = withContext(Dispatchers.IO) {
                 val callback: (String) -> Unit = { line ->
-                    val isFound = line.contains("bootanimation", ignoreCase = true) && line.endsWith(".zip", ignoreCase = true)
+                    val isFound = line.contains("bootanimation", ignoreCase = true) && line.endsWith(".zip", ignoreCase = true) &&
+                        utils.ShellUtils.isSafeSystemPath(line)
                     if (isFound) {
                         tempFoundPaths.add(line)
                     }

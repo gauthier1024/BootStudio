@@ -32,6 +32,12 @@ data class BootAnimPart(
 
 object BootAnimParser {
 
+    private const val MAX_ENTRIES = 5000
+    private const val MAX_EXTRACTED_BYTES = 512L * 1024 * 1024
+
+    /** Escapes a path for the ffconcat `file '...'` directive (a quote would end the string). */
+    private fun escapeConcatPath(path: String): String = path.replace("'", "'\\''")
+
     fun parseDesc(zipFile: File): BootAnimDesc? {
         return try {
             zipFile.inputStream().use { inputStream ->
@@ -241,18 +247,33 @@ object BootAnimParser {
         val concatFile = File(tempDir, "concat.txt")
 
         try {
-            // 1. Extract ALL images from ZIP (raw bytes)
+            // 1. Extract ALL images from ZIP (raw bytes).
+            // The archive is untrusted: reject path traversal and cap the amount of data written.
+            var extractedEntries = 0
+            var extractedBytes = 0L
             ZipInputStream(inputStream.buffered()).use { zip ->
                 var entry = zip.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory) {
                         val entryName = entry.name.replace("\\", "/")
                         val ext = entryName.substringAfterLast(".", "").lowercase()
-                        if (listOf("png", "jpg", "jpeg", "bmp", "webp").contains(ext)) {
+                        if (FileNames.isSafeEntryName(entryName) &&
+                            listOf("png", "jpg", "jpeg", "bmp", "webp").contains(ext)
+                        ) {
                             val file = File(extractDir, entryName)
-                            file.parentFile?.mkdirs()
-                            FileOutputStream(file).use { out ->
-                                zip.copyTo(out)
+                            if (FileNames.isInside(extractDir, file)) {
+                                if (++extractedEntries > MAX_ENTRIES) break
+                                file.parentFile?.mkdirs()
+                                FileOutputStream(file).use { out ->
+                                    val buffer = ByteArray(8192)
+                                    var n = zip.read(buffer)
+                                    while (n != -1) {
+                                        extractedBytes += n
+                                        if (extractedBytes > MAX_EXTRACTED_BYTES) throw java.io.IOException("Archive too large")
+                                        out.write(buffer, 0, n)
+                                        n = zip.read(buffer)
+                                    }
+                                }
                             }
                         }
                     }
@@ -280,7 +301,7 @@ object BootAnimParser {
                         
                         files?.forEach { file ->
                             if (frameCount < maxFrames) {
-                                writer.write("file '${file.absolutePath}'\n")
+                                writer.write("file '${escapeConcatPath(file.absolutePath)}'\n")
                                 writer.write("duration $frameDuration\n")
                                 frameCount++
                             }
@@ -300,10 +321,13 @@ object BootAnimParser {
             val vf = "fps=15,crop=min(iw\\,ih):min(iw\\,ih):(iw-min(iw\\,ih))/2:(ih-min(iw\\,ih))/2,scale=256:256"
             
             // Using concat demuxer is much faster as FFmpeg handles diverse inputs directly
-            val command = "-y -f concat -safe 0 -i \"${concatFile.absolutePath}\" " +
-                    "-vf \"$vf\" -c:v mpeg4 -q:v 5 -pix_fmt yuv420p -movflags +faststart \"${outputMp4File.absolutePath}\""
+            val command = listOf(
+                "-y", "-f", "concat", "-safe", "0", "-i", concatFile.absolutePath,
+                "-vf", vf, "-c:v", "mpeg4", "-q:v", "5", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", outputMp4File.absolutePath
+            )
 
-            DiagnosticLogger.log("ffmpeg", "preview gen optimized", command)
+            DiagnosticLogger.log("ffmpeg", "preview gen optimized", command.joinToString(" "))
 
             Thread {
                 val session = FFmpegKit.executeBackground(command)

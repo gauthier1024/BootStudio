@@ -261,7 +261,8 @@ fun SettingsScreen(
                                 
                                 withContext(Dispatchers.IO) {
                                     CommandExecutor.executeWithSu(searchCommand, purpose = "scan for bootanim") { line ->
-                                        if (line.contains("bootanimation", ignoreCase = true) && line.endsWith(".zip", ignoreCase = true)) {
+                                        if (line.contains("bootanimation", ignoreCase = true) && line.endsWith(".zip", ignoreCase = true) &&
+                                            utils.ShellUtils.isSafeSystemPath(line)) {
                                             newFoundPaths.add(line)
                                         }
                                     }

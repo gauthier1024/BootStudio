@@ -4,26 +4,35 @@ import com.bootstudio.BuildConfig
 
 object ModuleManager {
 
-    const val CENTRAL_ZIP = "/data/adb/modules/BootStudio/bootanimation.zip"
+    private const val MODULE_ROOT = "/data/adb/modules/BootStudio"
+    const val CENTRAL_ZIP = "$MODULE_ROOT/bootanimation.zip"
 
+    private const val ERR_UNSAFE_PATH = "Error: refusing unsafe path"
+
+    /**
+     * Builds the module's service.sh. It is executed as root at every boot by the root
+     * manager, so every path is validated by the callers and single-quoted here.
+     */
     private fun getServiceScriptContent(paths: List<String>): String {
-        val pathsString = paths.joinToString(" ") { "\"$it\"" }
+        val pathsString = paths.joinToString(" ") { ShellUtils.quote(it) }
         return """
             #!/system/bin/sh
             MODDIR=${'$'}{0%/*}
             CENTRAL="${'$'}MODDIR/bootanimation.zip"
-            
+
             [ ! -f "${'$'}CENTRAL" ] && exit 0
-            
+
             for p in $pathsString; do
-                if echo "${'$'}p" | grep -q "^/data/"; then
-                    i=0
-                    while [ ! -f "${'$'}p" ] && [ ${'$'}i -lt 30 ]; do
-                        sleep 1
-                        i=${'$'}((i+1))
-                    done
-                fi
-                
+                case "${'$'}p" in
+                    /data/*)
+                        i=0
+                        while [ ! -f "${'$'}p" ] && [ ${'$'}i -lt 30 ]; do
+                            sleep 1
+                            i=${'$'}((i+1))
+                        done
+                        ;;
+                esac
+
                 if [ -f "${'$'}p" ]; then
                     mount --bind "${'$'}CENTRAL" "${'$'}p"
                 fi
@@ -31,27 +40,31 @@ object ModuleManager {
         """.trimIndent()
     }
 
+    /** Only paths that look like real boot animation locations may reach the root shell or service.sh. */
+    private fun allSafe(paths: List<String>) = paths.all { ShellUtils.isSafeSystemPath(it) }
+
     fun createModule(setupPaths: List<String>): String {
-        val moduleRoot = "/data/adb/modules/BootStudio"
+        if (!allSafe(setupPaths)) return ERR_UNSAFE_PATH
 
         val commands = mutableListOf(
-            "mkdir -p \"$moduleRoot/original\"",
-            "printf \"id=BootStudio\\nname=BootStudio\\nversion=${BuildConfig.VERSION_NAME}\\nversionCode=${BuildConfig.VERSION_CODE}\\nauthor=gauthier1024\\ndescription=Custom bootanimation overlay\\n\" > \"$moduleRoot/module.prop\"",
-            "cat << 'EOF' > \"$moduleRoot/action.sh\"\n#!/system/bin/sh\nam start -n ${BuildConfig.APPLICATION_ID}/${BuildConfig.APPLICATION_ID}.MainActivity\nEOF",
-            "chmod 755 \"$moduleRoot/action.sh\"",
-            "chown root:root \"$moduleRoot/action.sh\"",
-            "echo '#!/system/bin/sh' > \"$moduleRoot/service.sh\"",
-            "chmod 755 \"$moduleRoot/service.sh\"",
-            "rm -f \"$CENTRAL_ZIP\"",
-            "touch \"$moduleRoot/auto_mount\"",
-            "rm -f \"$moduleRoot/disable\""
+            "mkdir -p ${ShellUtils.quote("$MODULE_ROOT/original")}",
+            "printf 'id=BootStudio\\nname=BootStudio\\nversion=${BuildConfig.VERSION_NAME}\\nversionCode=${BuildConfig.VERSION_CODE}\\nauthor=gauthier1024\\ndescription=Custom bootanimation overlay\\n' > ${ShellUtils.quote("$MODULE_ROOT/module.prop")}",
+            "cat << 'EOF' > ${ShellUtils.quote("$MODULE_ROOT/action.sh")}\n#!/system/bin/sh\nam start -n ${BuildConfig.APPLICATION_ID}/${BuildConfig.APPLICATION_ID}.MainActivity\nEOF",
+            "chmod 755 ${ShellUtils.quote("$MODULE_ROOT/action.sh")}",
+            "chown root:root ${ShellUtils.quote("$MODULE_ROOT/action.sh")}",
+            "echo '#!/system/bin/sh' > ${ShellUtils.quote("$MODULE_ROOT/service.sh")}",
+            "chmod 755 ${ShellUtils.quote("$MODULE_ROOT/service.sh")}",
+            "rm -f ${ShellUtils.quote(CENTRAL_ZIP)}",
+            "touch ${ShellUtils.quote("$MODULE_ROOT/auto_mount")}",
+            "rm -f ${ShellUtils.quote("$MODULE_ROOT/disable")}"
         )
 
         setupPaths.forEach { path ->
             val backupFileName = path.trimStart('/').replace('/', '_')
-            val backupFile = "$moduleRoot/original/$backupFileName"
-            commands.add("if [ ! -f \"$backupFile\" ]; then cp \"$path\" \"$backupFile\"; fi")
-            commands.add("umount \"$path\" 2>/dev/null")
+            val backupFile = ShellUtils.quote("$MODULE_ROOT/original/$backupFileName")
+            val qPath = ShellUtils.quote(path)
+            commands.add("if [ ! -f $backupFile ]; then cp $qPath $backupFile; fi")
+            commands.add("umount $qPath 2>/dev/null")
         }
 
         var lastResult = ""
@@ -62,27 +75,32 @@ object ModuleManager {
         return lastResult
     }
 
-    fun disableModule(): String {
-        val moduleRoot = "/data/adb/modules/BootStudio"
-        return CommandExecutor.executeWithSu("touch $moduleRoot/disable", purpose = "disabling module")
-    }
+    fun disableModule(): String =
+        CommandExecutor.executeWithSu("touch ${ShellUtils.quote("$MODULE_ROOT/disable")}", purpose = "disabling module")
 
+    /**
+     * [zipPath] is the source animation (app-private file); [targetSystemPaths] the
+     * system locations the module bind-mounts it over.
+     */
     fun changeBootAnimation(zipPath: String, targetSystemPaths: List<String>): String {
-        val moduleRoot = "/data/adb/modules/BootStudio"
-        
+        if (!allSafe(targetSystemPaths) || !ShellUtils.isSafeAbsolutePath(zipPath)) return ERR_UNSAFE_PATH
+        val qCentral = ShellUtils.quote(CENTRAL_ZIP)
+        val qService = ShellUtils.quote("$MODULE_ROOT/service.sh")
+
         val commands = mutableListOf(
-            "rm -f \"$moduleRoot/disable\"",
-            "mkdir -p \"$moduleRoot\"",
-            "cp \"$zipPath\" \"$CENTRAL_ZIP\"",
-            "chmod 644 \"$CENTRAL_ZIP\"",
-            "chown root:root \"$CENTRAL_ZIP\"",
-            "cat << 'EOF' > \"$moduleRoot/service.sh\"\n${getServiceScriptContent(targetSystemPaths)}\nEOF",
-            "chmod 755 \"$moduleRoot/service.sh\""
+            "rm -f ${ShellUtils.quote("$MODULE_ROOT/disable")}",
+            "mkdir -p ${ShellUtils.quote(MODULE_ROOT)}",
+            "cp ${ShellUtils.quote(zipPath)} $qCentral",
+            "chmod 644 $qCentral",
+            "chown root:root $qCentral",
+            "cat << 'EOF' > $qService\n${getServiceScriptContent(targetSystemPaths)}\nEOF",
+            "chmod 755 $qService"
         )
 
         // Apply mounts immediately so they are visible without reboot
         targetSystemPaths.forEach { path ->
-            commands.add("if [ -f \"$path\" ]; then umount \"$path\" 2>/dev/null; mount --bind \"$CENTRAL_ZIP\" \"$path\"; fi")
+            val qPath = ShellUtils.quote(path)
+            commands.add("if [ -f $qPath ]; then umount $qPath 2>/dev/null; mount --bind $qCentral $qPath; fi")
         }
 
         var lastResult = ""
@@ -94,16 +112,17 @@ object ModuleManager {
     }
 
     fun setDefaultAnimation(targetSystemPaths: List<String>): String {
-        val moduleRoot = "/data/adb/modules/BootStudio"
+        if (!allSafe(targetSystemPaths)) return ERR_UNSAFE_PATH
+        val qService = ShellUtils.quote("$MODULE_ROOT/service.sh")
         val commands = mutableListOf(
-            "rm -f \"$CENTRAL_ZIP\"",
-            "echo '#!/system/bin/sh' > \"$moduleRoot/service.sh\"",
-            "chmod 755 \"$moduleRoot/service.sh\""
+            "rm -f ${ShellUtils.quote(CENTRAL_ZIP)}",
+            "echo '#!/system/bin/sh' > $qService",
+            "chmod 755 $qService"
         )
-        
+
         // Remove mounts immediately
         targetSystemPaths.forEach { path ->
-            commands.add("umount \"$path\" 2>/dev/null")
+            commands.add("umount ${ShellUtils.quote(path)} 2>/dev/null")
         }
 
         var lastResult = ""
